@@ -6,8 +6,8 @@ from discord.ext import commands
 from player_stats import get_player_info_dict
 
 # Replace 'YOUR_BOT_TOKEN' with your bot's token
-# TOKEN = 'MTMzNzM0Mjk2NTcwOTkzNDYwNA.GJi-qK.PCpUaUKYQ2U63iEPdzPEtPRa6P9cl9bM-ghW2o'
-TOKEN = 'MTMzNzQ0OTQ5MjgwMjMxMDM0NA.GIi1v1.yHa0asvsTac3YW6hwFFyxeZ-W8OeX1yQMD4its'
+TOKEN = 'MTMzNzM0Mjk2NTcwOTkzNDYwNA.GJi-qK.PCpUaUKYQ2U63iEPdzPEtPRa6P9cl9bM-ghW2o'
+# TOKEN = 'MTMzNzQ0OTQ5MjgwMjMxMDM0NA.GIi1v1.yHa0asvsTac3YW6hwFFyxeZ-W8OeX1yQMD4its'
 
 # Intents are required for certain events and data
 intents = discord.Intents.default()
