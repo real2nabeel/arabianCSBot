@@ -127,10 +127,10 @@ async def rank(interaction: discord.Interaction, player_name: str):
         )
         return  # Exit the function early
 
-    embed = discord.Embed(title=f"**{player_data['Name']}'s Player Stats**", color=discord.Color.blue())
-
     if mode == 0:
         # Main Stats Section
+        embed = discord.Embed(title=f"**{player_data['Name']}'s Player Stats**", color=discord.Color.blue())
+
         embed.add_field(name="🏅 Rank", value=f"**{re.sub(r'[^a-zA-Z]', '', player_data['Rank'])}**", inline=True)
         embed.add_field(name="🎯 K/D Ratio", value=f"**{player_data['K/D Ratio']}**", inline=True)
         embed.add_field(name="💀 Kills / Deaths", value=f"**{player_data['Kills']} / {player_data['Deaths']}**",
@@ -165,12 +165,13 @@ async def rank(interaction: discord.Interaction, player_name: str):
 
     elif mode == 1:
         player_names = list(player_data.values())  # Extract player names from the dictionary
-        embed = discord.Embed(title="Too many players with such username",
-                              description="Please re-enter a more precise name",
-                              color=discord.Color.green())
+        embed = discord.Embed(title="Too many players with similar username",
+                              description="",
+                              color=discord.Color.red())
 
-        for name in player_names:
-            embed.add_field(name="1", value=name, inline=True)
+        player_names_str = "`" + ", ".join(str(name) for name in player_names) + "`"
+        embed.add_field(name=player_names_str, value="", inline=True)
+        embed.add_field(name="", value="Please re-enter a more precise name (case-sensitive)", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

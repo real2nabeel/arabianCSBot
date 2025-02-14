@@ -101,7 +101,12 @@ def find_player_info(player_id):
 
 def get_player_info_dict(player_name):
     players_dict = search_player(player_name)
-    if len(players_dict) == 1:
+    matching_players_dict = {}
+    for steam_id, name in players_dict.items():
+        if player_name == name:
+            matching_players_dict[steam_id] = name
+
+    if len(matching_players_dict) == 1:
         return find_player_info(list(players_dict.keys())[0]), 0
     else:
         return players_dict, 1
