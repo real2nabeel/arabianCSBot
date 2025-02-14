@@ -1,11 +1,13 @@
+import re
+
 import discord
 from discord.ext import commands
 
 from player_stats import get_player_info_dict
 
 # Replace 'YOUR_BOT_TOKEN' with your bot's token
-TOKEN = 'MTMzNzM0Mjk2NTcwOTkzNDYwNA.GJi-qK.PCpUaUKYQ2U63iEPdzPEtPRa6P9cl9bM-ghW2o'
-# TOKEN = 'MTMzNzQ0OTQ5MjgwMjMxMDM0NA.GIi1v1.yHa0asvsTac3YW6hwFFyxeZ-W8OeX1yQMD4its'
+# TOKEN = 'MTMzNzM0Mjk2NTcwOTkzNDYwNA.GJi-qK.PCpUaUKYQ2U63iEPdzPEtPRa6P9cl9bM-ghW2o'
+TOKEN = 'MTMzNzQ0OTQ5MjgwMjMxMDM0NA.GIi1v1.yHa0asvsTac3YW6hwFFyxeZ-W8OeX1yQMD4its'
 
 # Intents are required for certain events and data
 intents = discord.Intents.default()
@@ -24,35 +26,98 @@ async def on_ready():
     except Exception as e:
         print(e)
 
-# Define the /ip command
 @bot.tree.command(name="ip", description="Returns an Embed of the Arabian IP")
 async def ip(interaction: discord.Interaction):
     # Create an embed
     embed = discord.Embed(
-        title="arabian-servers.com",  # Title of the embed
-        description="Have fun and enjoy your stay!",  # Description of the embed
-        color=discord.Color.blue(),  # Color of the embed (optional)
-        url="https://arabian-servers.com",
-
+        title="**Welcome to Arabian Servers!**",  # Title with more emphasis
+        description="Have fun and enjoy your stay! 🎮",
+        color=discord.Color.orange(),  # Vibrant color to make it stand out
+        url="https://arabian-servers.com",  # Link to website
     )
-    embed.set_author(name="151.80.47.182:27015")
+
+    embed.set_author(name="JOIN US!", icon_url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
+                                                                 "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                                                                 "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&")
+
     embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
-                                "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
-                                "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&")
-    # Set a footer (optional)
-    embed.set_footer(text="Arabian Servers for CS 1.6 since 2013!"
-                     , icon_url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
-                                "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
-                                "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&")
+                            "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                            "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&")
+
+    # Place the IP in its own large, emphasized field
+    embed.add_field(name="🔥 **Server IP** 🔥", value="**`151.80.47.182:27015`**", inline=False)
+
+    # Add fields with some cool icons and structured layout
+    embed.add_field(name="📅 **Servers Running Since**", value="2013", inline=True)
+    embed.add_field(name="🌍 **Join Now!**", value="[Click here to visit the website](https://arabian-servers.com)", inline=True)
+
+    embed.add_field(name="🎯 **Server Features**", value="• Fast and reliable gameplay\n"
+                                                          "• Friendly community\n"
+                                                          "• Fun events & tournaments", inline=False)
+
+    embed.add_field(name="📈 **Performance**", value="• Low ping\n"
+                                                     "• Stable connection\n"
+                                                     "• 24/7 availability", inline=False)
+
+    # Footer with logo and a call to action
+    embed.set_footer(
+        text="Join the fun! 🕹️ | Arabian Servers for CS 1.6 since 2013",
+        icon_url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
+                 "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                 "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&"
+    )
 
     # Send the embed as a response
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="stats", description="Get stats for a player")
-async def stats(interaction: discord.Interaction, player_name: str):
+@bot.command(name="ip")
+async def ip_prefix(ctx):
+    # Create an embed
+    embed = discord.Embed(
+        title="**Welcome to Arabian Servers!**",  # Title with more emphasis
+        description="Have fun and enjoy your stay! 🎮",
+        color=discord.Color.orange(),  # Vibrant color to make it stand out
+        url="https://arabian-servers.com",  # Link to website
+    )
+
+    embed.set_author(name="JOIN US!", icon_url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
+                                                                 "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                                                                 "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&")
+
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
+                            "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                            "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&")
+
+    # Place the IP in its own large, emphasized field
+    embed.add_field(name="🔥 **Server IP** 🔥", value="**`151.80.47.182:27015`**", inline=False)
+
+    # Add fields with some cool icons and structured layout
+    embed.add_field(name="📅 **Servers Running Since**", value="2013", inline=True)
+    embed.add_field(name="🌍 **Join Now!**", value="[Click here to visit the website](https://arabian-servers.com)", inline=True)
+
+    embed.add_field(name="🎯 **Server Features**", value="• Fast and reliable gameplay\n"
+                                                          "• Friendly community\n"
+                                                          "• Fun events & tournaments", inline=False)
+
+    embed.add_field(name="📈 **Performance**", value="• Low ping\n"
+                                                     "• Stable connection\n"
+                                                     "• 24/7 availability", inline=False)
+
+    # Footer with logo and a call to action
+    embed.set_footer(
+        text="Join the fun! 🕹️ | Arabian Servers for CS 1.6 since 2013",
+        icon_url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
+                 "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                 "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&"
+    )
+    await ctx.send(embed=embed)
+
+
+@bot.tree.command(name="rank", description="Get stats for a player")
+async def rank(interaction: discord.Interaction, player_name: str):
     # Fetch player data (replace this with your actual logic)
-    player_data = get_player_info_dict(player_name)
+    player_data, mode = get_player_info_dict(player_name)
 
     # Check if player_data is empty
     if not player_data:  # This checks if the dictionary is empty
@@ -62,37 +127,52 @@ async def stats(interaction: discord.Interaction, player_name: str):
         )
         return  # Exit the function early
 
-    # Create the embed (only if player_data is not empty)
-    embed = discord.Embed(title=f"Player Stats for {player_data['name']}", color=discord.Color.blue())
+    embed = discord.Embed(title=f"**{player_data['Name']}'s Player Stats**", color=discord.Color.blue())
 
-    # Add fields to the embed
-    embed.add_field(name="Rank", value=player_data['rank'], inline=True)
-    embed.add_field(name="Current XP", value=player_data['current_xp'], inline=True)
-    embed.add_field(name="Progress", value=player_data['progress'], inline=True)
-    embed.add_field(name="MVP", value=player_data['mvp'], inline=True)
-    embed.add_field(name="Rounds Won", value=player_data['rounds_won'], inline=True)
-    embed.add_field(name="C4 Planted", value=player_data['c4_planted'], inline=True)
-    embed.add_field(name="C4 Exploded", value=player_data['c4_exploded'], inline=True)
-    embed.add_field(name="C4 Defused", value=player_data['c4_defused'], inline=True)
-    embed.add_field(name="Kills", value=player_data['kills'], inline=True)
-    embed.add_field(name="Deaths", value=player_data['deaths'], inline=True)
-    embed.add_field(name="Assists", value=player_data['assists'], inline=True)
-    embed.add_field(name="Headshots", value=player_data['headshots'], inline=True)
-    embed.add_field(name="KD Ratio", value=player_data['kd_ratio'], inline=True)
-    embed.add_field(name="Shots", value=player_data['shots'], inline=True)
-    embed.add_field(name="Hits", value=player_data['hits'], inline=True)
-    embed.add_field(name="Damage", value=player_data['damage'], inline=True)
-    embed.add_field(name="Accuracy", value=player_data['accuracy'], inline=True)
-    embed.add_field(name="First Login", value=player_data['first_login'], inline=True)
-    embed.add_field(name="Last Login", value=player_data['last_login'], inline=True)
-    embed.add_field(name="Played Time", value=player_data['played_time'], inline=True)
+    if mode == 0:
+        # Main Stats Section
+        embed.add_field(name="🏅 Rank", value=f"**{re.sub(r'[^a-zA-Z]', '', player_data['Rank'])}**", inline=True)
+        embed.add_field(name="🎯 K/D Ratio", value=f"**{player_data['K/D Ratio']}**", inline=True)
+        embed.add_field(name="💀 Kills / Deaths", value=f"**{player_data['Kills']} / {player_data['Deaths']}**",
+                        inline=True)
+        embed.add_field(name="🩸 Headshots", value=f"**{player_data['Headshots']}**", inline=True)
+        embed.add_field(name="🔫 Shots / Hits", value=f"**{player_data['Shots']} / {player_data['Hits']}**", inline=True)
+        embed.add_field(name="💥 Damage", value=f"**{player_data['Damage']}**", inline=True)
 
-    # Add top weapons field
-    top_weapons = "\n".join([f"{list(weapon.keys())[0]}: {list(weapon.values())[0]}" for weapon in player_data['top_weapons']])
-    embed.add_field(name="Top Weapons", value=top_weapons, inline=False)
+        # C4 Stats Section
+        embed.add_field(name="💣 C4 Stats",
+                        value=f"Planted: **{player_data['C4 Planted']}** | Exploded: **{player_data['C4 Exploded']}** | Defused: **{player_data['C4 Defused']}**",
+                        inline=False)
 
-    # Send the embed as a response to the interaction
-    await interaction.response.send_message(embed=embed)
+        # MVP Section
+        embed.add_field(name="🏆 Most Valuable Player", value=f"**{player_data['Most Valuable Player']}**", inline=True)
+
+        # Top Weapons Section
+        top_weapons = "\n".join(
+            [f"{list(weapon.keys())[0]}: **{list(weapon.values())[0]}**" for weapon in player_data['Top Weapons']])
+        embed.add_field(name="🔝 Top Weapons", value=top_weapons, inline=False)
+
+        # Played Time and Login Section (with better spacing)
+        embed.add_field(name="⏱️ Total Played Time", value=f"**{player_data['Played Time']}**", inline=False)
+        embed.add_field(name="📅 First Login", value=f"**{player_data['First Login']}**", inline=False)
+        embed.add_field(name="📅 Last Login", value=f"**{player_data['Last Login']}**", inline=False)
+
+        # Send the embed message
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.response.send_message(embed=embed)
+
+    elif mode == 1:
+        player_names = list(player_data.values())  # Extract player names from the dictionary
+        embed = discord.Embed(title="Too many players with such username",
+                              description="Please re-enter a more precise name",
+                              color=discord.Color.green())
+
+        for name in player_names:
+            embed.add_field(name="1", value=name, inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 # Run the bot
 bot.run(TOKEN)

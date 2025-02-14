@@ -1,95 +1,107 @@
+import urllib
+
 import requests
 from bs4 import BeautifulSoup
+import re
 
-def find_player_page_soup(player_search_query):
-    initial_url = "http://rank.tornadosw.eu/top15.php"
+def search_player(player_search_query):
+    initial_url = "http://rank.tornadosw.eu/top15.php?"
     params = {
         "lang": "en",
         "player": "",
+        "me": "",
+        "top": "15",
         "style": "1",
         "order": "13",
         "default_order": "13",
-        "default_weapon": "0",
         "weapon": "0",
+        "show": "0",
+        "default_weapon": "0",
         "page": "1",
         "ip_port": "151.80.47.182:27015",
         "type": "0",
-        "search": player_search_query
+        "search": player_search_query,
+        "zp": "0",
+        "skills": "L=60.00|L%20=75.00|M-=85.00|M=100.00|M%20=115.00|H-=130.00|H=140.00|H%20=150.00|P-=165.00|P=180.00|P%20=195.00|G=210.00"
     }
-
     response = requests.get(initial_url, params=params)
+    steam_player_dict = {}
 
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
-        target_td = soup.find('td', id='sp')
-        if target_td:
-            target_a = target_td.find('a', class_='glow1')
-            if target_a:
-                href = target_a.get('href')
-                new_url = href
-                new_response = requests.get(new_url)
-                if new_response.status_code == 200:
-                    return BeautifulSoup(new_response.content, 'html.parser')
-                else:
-                    print("Failed to fetch the new page:", new_response.status_code)
-                    return None
-            else:
-                print("Target <a> tag not found.")
-                return None
-        else:
-            print("Target <td> tag not found.")
-            return None
-    else:
-        print("Failed to fetch the initial page:", response.status_code)
-        return None
+        a_tags = soup.find_all('a', href=True)
+        for tag in a_tags:
+            href = tag['href']
+            parsed_url = urllib.parse.urlparse(href)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            player_id = query_params.get('player', [None])[0]
+            player_name = tag.get_text(strip=True)
 
-def scrap_player_info(soup):
+            if player_id:
+                steam_player_dict[player_id] = player_name
+    return steam_player_dict
+
+def find_player_info(player_id):
+    initial_url = "http://rank.tornadosw.eu/user.php"
+    params = {
+        "lang": "en",
+        "player": player_id,
+        "me": "",
+        "top": "15",
+        "style": "1",
+        "order": "13",
+        "default_order": "13",
+        "weapon": "0",
+        "show": "0",
+        "default_weapon": "0",
+        "page": "1",
+        "ip_port": "151.80.47.182:27015",
+        "type": "0",
+        "search": "",
+        "zp": "0",
+        "skills": "L=60.00|L%20=75.00|M-=85.00|M=100.00|M%20=115.00|H-=130.00|H=140.00|H%20=150.00|P-=165.00|P=180.00|P%20=195.00|G=210.00"
+    }
+    response = requests.get(initial_url, params=params)
     player_info = {}
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, 'html.parser')
+        player_info['Region'] = soup.find('div', id='u').text.strip()
+        player_info['Name'] = soup.find('div', id='f0').text.strip()
+        player_info['Rank'] = soup.find('div', id='h').text.strip()
 
-    # Extract player name and rank
-    player_info['name'] = soup.find('div', id='f0').text.strip()
-    player_info['rank'] = soup.find('div', id='t').text.strip()
+        player_info['Most Valuable Player'] = soup.find(id='mvp').find('a').text
+        player_info['Rounds Won'] = soup.find(id='rwn').find('a').text
+        player_info['C4 Planted'] = soup.find(id='bp').find('a').text
+        player_info['C4 Exploded'] = soup.find(id='bc').find('a').text
+        player_info['C4 Defused'] = soup.find(id='di').find('a').text
 
-    # Extract current XP and progress
-    player_info['current_xp'] = soup.find('div', class_='number').text.strip()
-    player_info['progress'] = soup.find('div', class_='progress')['style'].split(':')[1].strip()
+        player_info['Kills'] = soup.find(id='kills').find('a').text
+        player_info['Deaths'] = soup.find(id='deaths').find('a').text
+        player_info['Assists'] = soup.find(id='assists').find('a').text
+        player_info['Headshots'] = soup.find(id='headshots').find('a').text
+        player_info['K/D Ratio'] = soup.find(id='kdratio').find('a').text
 
-    # Extract MVP, rounds won, C4 stats
-    player_info['mvp'] = soup.find('p', id='mvp').find('a').text.strip()
-    player_info['rounds_won'] = soup.find('p', id='rwn').find('a').text.strip()
-    player_info['c4_planted'] = soup.find('p', id='bp').find('a').text.strip()
-    player_info['c4_exploded'] = soup.find('p', id='bc').find('a').text.strip()
-    player_info['c4_defused'] = soup.find('p', id='di').find('a').text.strip()
+        player_info['Shots'] = soup.find(id='shots').find('a').text
+        player_info['Hits'] = soup.find(id='hits').find('a').text
+        player_info['Damage'] = soup.find(id='damage').find('a').text
+        player_info['Accuracy'] = soup.find(id='accuracy').find('a').text
 
-    # Extract statistics (kills, deaths, assists, etc.)
-    player_info['kills'] = soup.find('p', id='kills').find('a').text.strip()
-    player_info['deaths'] = soup.find('p', id='deaths').find('a').text.strip()
-    player_info['assists'] = soup.find('p', id='assists').find('a').text.strip()
-    player_info['headshots'] = soup.find('p', id='headshots').find('a').text.strip()
-    player_info['kd_ratio'] = soup.find('p', id='kdratio').find('a').text.strip()
-    player_info['shots'] = soup.find('p', id='shots').find('a').text.strip()
-    player_info['hits'] = soup.find('p', id='hits').find('a').text.strip()
-    player_info['damage'] = soup.find('p', id='damage').find('a').text.strip()
-    player_info['accuracy'] = soup.find('p', id='accuracy').find('a').text.strip()
+        player_info['First Login'] = soup.find(id='firstlogin').find('a').text
+        player_info['Last Login'] = soup.find(id='lastlogin').find('a').text
+        player_info['Played Time'] = soup.find(id='playedtime').find('a').text
 
-    # Extract login and played time
-    player_info['first_login'] = soup.find('p', id='firstlogin').find('a').text.strip()
-    player_info['last_login'] = soup.find('p', id='lastlogin').find('a').text.strip()
-    player_info['played_time'] = soup.find('p', id='playedtime').find('a').text.strip()
-
-    # Extract top weapons
-    top_weapons = []
-    for weapon_div in soup.find_all('div', id='m'):
-        weapon_name = weapon_div.find('p').text.strip()
-        weapon_kills = weapon_div.find('div').text.strip()
-        top_weapons.append({weapon_name: weapon_kills})
-    player_info['top_weapons'] = top_weapons
-
+        # Extract top weapons
+        top_weapons = []
+        for weapon_div in soup.find_all('div', id='m'):
+            weapon_name = weapon_div.find('p').text.strip()
+            weapon_kills = weapon_div.find('div').text.strip()
+            top_weapons.append({weapon_name: weapon_kills})
+        player_info['Top Weapons'] = top_weapons
     return player_info
 
 def get_player_info_dict(player_name):
-    soup = find_player_page_soup(player_name)
-    if soup:
-        return scrap_player_info(soup)
+    players_dict = search_player(player_name)
+    if len(players_dict) == 1:
+        return find_player_info(list(players_dict.keys())[0]), 0
     else:
-        return {}
+        return players_dict, 1
