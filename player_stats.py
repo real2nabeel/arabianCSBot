@@ -66,9 +66,12 @@ def find_player_info(player_id):
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
         player_info['Region'] = soup.find('div', id='u').text.strip()
-        player_info['Name'] = soup.find('div', id='f0').text.strip()
-        player_info['Rank'] = soup.find('div', id='h').text.strip()
-
+        if soup.find('div', id='f0'):
+            player_info['Name'] = soup.find('div', id='f0').text.strip()
+        else:
+            player_info['Name'] = soup.find('div', id='f1').text.strip()
+        player_info['Rank'] = soup.find('p', id='i').text.strip()
+        player_info['Rank Placement'] = soup.find('div', id='t').text.strip()
         player_info['Most Valuable Player'] = soup.find(id='mvp').find('a').text
         player_info['Rounds Won'] = soup.find(id='rwn').find('a').text
         player_info['C4 Planted'] = soup.find(id='bp').find('a').text

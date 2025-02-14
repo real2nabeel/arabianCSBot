@@ -114,16 +114,14 @@ async def ip_prefix(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.tree.command(name="rank", description="Get stats for a player")
-async def rank(interaction: discord.Interaction, player_name: str):
-    # Fetch player data (replace this with your actual logic)
+@bot.tree.command(name="rankstats", description="Get stats for a player")
+async def rankstats(interaction: discord.Interaction, player_name: str):
     player_data, mode = get_player_info_dict(player_name)
 
-    # Check if player_data is empty
-    if not player_data:  # This checks if the dictionary is empty
+    if not player_data:
         await interaction.response.send_message(
             f"Player '{player_name}' cannot be found. Please make sure you submit an actual player name.",
-            ephemeral=True  # Only the user who invoked the command will see this message
+            ephemeral=True
         )
         return  # Exit the function early
 
@@ -131,7 +129,9 @@ async def rank(interaction: discord.Interaction, player_name: str):
         # Main Stats Section
         embed = discord.Embed(title=f"**{player_data['Name']}'s Player Stats**", color=discord.Color.blue())
 
-        embed.add_field(name="🏅 Rank", value=f"**{re.sub(r'[^a-zA-Z]', '', player_data['Rank'])}**", inline=True)
+        embed.add_field(name="🏅 Rank", value=f"**{player_data['Rank Placement']} ({player_data['Rank']}**)", inline=False)
+        embed.add_field(name="▬" * 20, value="", inline=False)
+
         embed.add_field(name="🎯 K/D Ratio", value=f"**{player_data['K/D Ratio']}**", inline=True)
         embed.add_field(name="💀 Kills / Deaths", value=f"**{player_data['Kills']} / {player_data['Deaths']}**",
                         inline=True)
@@ -139,19 +139,22 @@ async def rank(interaction: discord.Interaction, player_name: str):
         embed.add_field(name="🔫 Shots / Hits", value=f"**{player_data['Shots']} / {player_data['Hits']}**", inline=True)
         embed.add_field(name="💥 Damage", value=f"**{player_data['Damage']}**", inline=True)
 
+        embed.add_field(name="▬" * 20, value="", inline=False)
         # C4 Stats Section
         embed.add_field(name="💣 C4 Stats",
                         value=f"Planted: **{player_data['C4 Planted']}** | Exploded: **{player_data['C4 Exploded']}** | Defused: **{player_data['C4 Defused']}**",
                         inline=False)
 
         # MVP Section
-        embed.add_field(name="🏆 Most Valuable Player", value=f"**{player_data['Most Valuable Player']}**", inline=True)
+        embed.add_field(name="🏆 Most Valuable Player", value=f"**{player_data['Most Valuable Player']} Times MVP**", inline=True)
 
+        embed.add_field(name="▬" * 20, value="", inline=False)
         # Top Weapons Section
         top_weapons = "\n".join(
             [f"{list(weapon.keys())[0]}: **{list(weapon.values())[0]}**" for weapon in player_data['Top Weapons']])
         embed.add_field(name="🔝 Top Weapons", value=top_weapons, inline=False)
 
+        embed.add_field(name="▬" * 20, value="", inline=False)
         # Played Time and Login Section (with better spacing)
         embed.add_field(name="⏱️ Total Played Time", value=f"**{player_data['Played Time']}**", inline=False)
         embed.add_field(name="📅 First Login", value=f"**{player_data['First Login']}**", inline=False)
