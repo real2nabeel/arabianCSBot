@@ -2,7 +2,7 @@ import urllib
 
 import requests
 from bs4 import BeautifulSoup
-import re
+import pandas as pd
 
 def search_player(player_search_query):
     initial_url = "http://rank.tornadosw.eu/top15.php?"
@@ -113,3 +113,86 @@ def get_player_info_dict(player_name):
         return find_player_info(list(players_dict.keys())[0]), 0
     else:
         return players_dict, 1
+
+
+def get_top_players(page="1"):
+    url = "http://rank.tornadosw.eu/top15.php"
+    params = {
+        "lang": "en",
+        "player": "",
+        "style": "1",
+        "order": "13",
+        "default_order": "13",
+        "default_weapon": "0",
+        "ip_port": "151.80.47.182:27015",
+        "type": "0",
+        "weapon": "0",
+        "search": "",
+        "zp": "0",
+        "skills": "L=60.00|L =75.00|M-=85.00|M=100.00|M =115.00|H-=130.00|H=140.00|H =150.00|P-=165.00|P=180.00|P =195.00|G=210.00",
+        "page": page
+    }
+    # Fetch the webpage content
+    response = requests.get(url, params)
+    html_content = response.content
+
+    # Parse the HTML content using BeautifulSoup
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    # Find the table containing player data
+    table = soup.find('table')
+
+    # Initialize lists to store player data
+    ranks = []
+    xps = []
+    names = []
+    kills = []
+    headshots = []
+    headshot_percentages = []
+    skills = []
+
+    # Iterate through each row in the table
+    for row in table.find_all('tr')[1:]:  # Skip the header row
+        columns = row.find_all('td')
+
+        # Extract data from each column
+        if row.find('td', id='p'):
+            rank = row.find('td', id='p').text.strip()
+        elif row.find('td', id='y'):
+            rank = "3"
+        elif row.find('td', id='w'):
+            rank = "2"
+        elif row.find('td', id='z'):
+            rank = "1"
+        xp = row.find('div', class_='number').text.strip()
+        name = row.find('td', id='sp').text.strip()
+        kill = columns[3].get_text(strip=True)
+        headshots_and_percentage = row.find('td', id='hs').text.strip()
+        headshot_percentage = row.find('td', id='hs').find('a').text.strip()
+        headshot = headshots_and_percentage.replace(headshot_percentage, '').strip()
+        skill = row.find('td', id='sk11').text.strip()
+        skill_number = row.find('td', id='sk11').find('td', id='sk12').text.strip()
+        skill_rank = skill.replace(skill_number, '').strip()
+        skill = skill_rank + " " + skill_number
+        # Append the data to the respective lists
+        ranks.append(rank)
+        xps.append(xp)
+        names.append(name)
+        kills.append(kill)
+        headshots.append(headshot)
+        headshot_percentages.append(headshot_percentage)
+        skills.append(skill)
+
+    # Create a DataFrame from the lists
+    data = {
+        'Rank': ranks,
+        'XP': xps,
+        'Name': names,
+        'Kills': kills,
+        'Headshots': headshots,
+        'Headshot Percentages': headshot_percentages,
+        'Skills': skills,
+    }
+
+    df = pd.DataFrame(data)
+    return df

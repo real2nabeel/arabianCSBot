@@ -1,13 +1,24 @@
-import re
+import os
+import traceback
 
 import discord
 from discord.ext import commands
+import logging
+import boto3
+from discord.ui import Button, View
 
-from player_stats import get_player_info_dict
+from player_stats import get_player_info_dict, get_top_players
+from constants import LOGGING_CHANNEL_ID
 
-# Replace 'YOUR_BOT_TOKEN' with your bot's token
-TOKEN = 'MTMzNzM0Mjk2NTcwOTkzNDYwNA.GJi-qK.PCpUaUKYQ2U63iEPdzPEtPRa6P9cl9bM-ghW2o'
-# TOKEN = 'MTMzNzQ0OTQ5MjgwMjMxMDM0NA.GIi1v1.yHa0asvsTac3YW6hwFFyxeZ-W8OeX1yQMD4its'
+ENV = 'dev'
+
+if ENV == 'dev':
+    token = os.environ['TOKEN_DEV']
+else:
+    ssm = boto3.client("ssm", region_name="eu-north-1")
+    response = ssm.get_parameter(Name="/bot_token_master/")
+    token = response["Parameter"]["Value"]
+
 
 # Intents are required for certain events and data
 intents = discord.Intents.default()
@@ -66,7 +77,7 @@ async def ip(interaction: discord.Interaction):
                  "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
                  "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&"
     )
-
+    var = 1 / 0
     # Send the embed as a response
     await interaction.response.send_message(embed=embed)
 
@@ -111,6 +122,7 @@ async def ip_prefix(ctx):
                  "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
                  "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&"
     )
+    var = 1 / 0
     await ctx.send(embed=embed)
 
 
@@ -177,6 +189,82 @@ async def rankstats(interaction: discord.Interaction, player_name: str):
         embed.add_field(name="", value="Please re-enter a more precise name (case-sensitive)", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+@bot.command(name="top15")
+async def top_prefix(ctx):
+    page = 1
+    leaderboard_str = top_logic(page)
+    await ctx.send(leaderboard_str)
 
-# Run the bot
-bot.run(TOKEN)
+def top_logic(page: int):
+    max_name_length = 15
+    df = get_top_players(str(page))
+
+    leaderboard_str = "```\n"
+    leaderboard_str += "{:<5} {:<11} {:<20} {:<6} {:<10} {:<12} {:<6}\n".format("Rank", "XP", "Name", "Kills",
+                                                                                       "Headshots", "Headshot %", "Skill")
+
+    for index, row in df.iterrows():
+        # Truncate player names if they are too long
+        truncated_name = (row['Name'][:max_name_length] + '...') if len(row['Name']) > max_name_length else row['Name']
+
+        leaderboard_str += "{:<5} {:<11} {:<20} {:<6} {:<10} {:<12} {:<6}\n".format(
+            row['Rank'], row['XP'], truncated_name, row['Kills'], row['Headshots'], row['Headshot Percentages'],
+            row['Skills']
+        )
+
+    leaderboard_str += "```"
+
+    return leaderboard_str
+
+# Create the slash command
+@bot.tree.command(name="top", description="Displays the current leaderboard")
+async def top(interaction: discord.Interaction, page:int = 1):
+    if page < 1:
+        await interaction.response.send_message(
+            f"Page number must be higher than 1.",
+            ephemeral=True
+        )
+        return
+
+    # Generate the first page
+    leaderboard_str = top_logic(page)
+
+    # Create the buttons (Previous and Next)
+    prev_button = Button(label="Previous Page", style=discord.ButtonStyle.secondary, disabled=True)
+    next_button = Button(label="Next Page", style=discord.ButtonStyle.secondary)
+
+    # Define the button actions
+    async def on_prev_button_click(interaction: discord.Interaction):
+        nonlocal page
+        if page > 1:
+            page -= 1
+            leaderboard_str = top_logic(page)
+            await interaction.response.edit_message(content=leaderboard_str, view=view)
+        prev_button.disabled = (page == 1)
+        # next_button.disabled = (page * ROWS_PER_PAGE >= len(df))
+        await interaction.response.edit_message(view=view)
+
+    async def on_next_button_click(interaction: discord.Interaction):
+        nonlocal page
+        page += 1
+        leaderboard_str = top_logic(page)
+        await interaction.response.edit_message(content=leaderboard_str, view=view)
+        prev_button.disabled = (page == 1)
+        # next_button.disabled = (page * ROWS_PER_PAGE >= len(df))
+        await interaction.response.edit_message(view=view)
+
+    # Add the actions to the buttons
+    prev_button.callback = on_prev_button_click
+    next_button.callback = on_next_button_click
+
+    # Create a view for the buttons
+    view = View()
+    view.add_item(prev_button)
+    view.add_item(next_button)
+
+    # Send the message with the leaderboard and buttons
+    await interaction.response.send_message(leaderboard_str, view=view)
+
+
+handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
+bot.run(token, log_handler=handler)
