@@ -15,9 +15,7 @@ ENV = 'master'
 if ENV == 'dev':
     token = os.environ['TOKEN_DEV']
 else:
-    ssm = boto3.client("ssm", region_name="eu-north-1")
-    response = ssm.get_parameter(Name="/bot_token_master/")
-    token = response["Parameter"]["Value"]
+    token = 'MTMzNzM0Mjk2NTcwOTkzNDYwNA.GJi-qK.PCpUaUKYQ2U63iEPdzPEtPRa6P9cl9bM-ghW2o'
 
 
 # Intents are required for certain events and data
