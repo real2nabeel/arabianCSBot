@@ -10,7 +10,7 @@ from discord.ui import Button, View
 from player_stats import get_player_info_dict, get_top_players
 from constants import LOGGING_CHANNEL_ID
 
-ENV = 'dev'
+ENV = 'master'
 
 if ENV == 'dev':
     token = os.environ['TOKEN_DEV']
