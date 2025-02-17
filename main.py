@@ -8,9 +8,10 @@ import boto3
 from discord.ui import Button, View
 
 from player_stats import get_player_info_dict, get_top_players
-from constants import LOGGING_CHANNEL_ID
+from constants import LOGGING_CHANNEL_ID, SERVER_ADDRESS
+import a2s
 
-ENV = 'dev'
+ENV = 'master'
 
 if ENV == 'dev':
     token = os.environ['TOKEN_DEV']
@@ -34,6 +35,71 @@ async def on_ready():
         print(f"Synced {len(synced)} command(s)")
     except Exception as e:
         print(e)
+
+
+@bot.tree.command(name="ip2", description="Returns an Embed of the Arabian IP")
+async def ip2(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="**Welcome to Arabian Servers!**",  # Title with more emphasis
+        description="Have fun and enjoy your stay! 🎮",
+        color=discord.Color.orange(),  # Vibrant color to make it stand out
+        url="https://arabian-servers.com",  # Link to website
+    )
+
+    embed.set_author(name="JOIN US!",
+                     icon_url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
+                              "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                              "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&")
+
+    embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
+                            "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                            "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&")
+
+    # Place the IP in its own large, emphasized field
+    embed.add_field(name="🔥 **Server IP** 🔥", value="**`151.80.47.182:27015`**", inline=False)
+
+    # Add fields with some cool icons and structured layout
+    embed.add_field(name="📅 **Servers Running Since**", value="2013", inline=True)
+    embed.add_field(name="🌍 **Join Now!**", value="[Click here to visit the website](https://arabian-servers.com)",
+                    inline=True)
+
+    info = a2s.info(SERVER_ADDRESS)
+    embed.add_field(name="🎯 **Current Players**", value=f"• {info.player_count}/{info.max_players}", inline=False)
+
+    # Footer with logo and a call to action
+    embed.set_footer(
+        text="Join the fun! 🕹️ | Arabian Servers for CS 1.6 since 2013",
+        icon_url="https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
+                 "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
+                 "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&"
+    )
+    # Send the embed as a response
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="players", description="Returns a table of the current players")
+async def players(interaction: discord.Interaction):
+    players_list = []
+    players = a2s.players(SERVER_ADDRESS)
+    if players:
+        for player in players:
+            players_list.append((player.name, player.score, player.duration))
+        players_list.sort(key=lambda x: x[1], reverse=True)
+
+        # Format as a table with proper alignment
+        message = "**🏆 Online Players Leaderboard:**\n"
+        message += "```\n"  # Start code block for better formatting
+        message += f"{'Rank':<4} {'Player':<20} {'Score':<5} {'Time (m)':<8}\n"
+        message += "-" * 42 + "\n"  # Horizontal separator
+
+        for idx, (name, score, time) in enumerate(players_list, start=1):
+            message += f"{idx:<4} {clean_name(name[:18]):<20} {score:<5} {round(time / 60, 2):<8}\n"
+        message += "```\n"  # end code block
+        await interaction.response.send_message(message)
+
+# Escape backticks in names
+def clean_name(name):
+    return name.replace("`", "´")
+
 
 @bot.tree.command(name="ip", description="Returns an Embed of the Arabian IP")
 async def ip(interaction: discord.Interaction):
