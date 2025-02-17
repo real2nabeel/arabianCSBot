@@ -10,7 +10,7 @@ from discord.ui import Button, View
 from player_stats import get_player_info_dict, get_top_players
 from constants import LOGGING_CHANNEL_ID
 
-ENV = 'master'
+ENV = 'dev'
 
 if ENV == 'dev':
     token = os.environ['TOKEN_DEV']
@@ -75,7 +75,6 @@ async def ip(interaction: discord.Interaction):
                  "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
                  "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&"
     )
-    var = 1 / 0
     # Send the embed as a response
     await interaction.response.send_message(embed=embed)
 
@@ -120,7 +119,6 @@ async def ip_prefix(ctx):
                  "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
                  "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&"
     )
-    var = 1 / 0
     await ctx.send(embed=embed)
 
 
