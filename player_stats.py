@@ -110,7 +110,7 @@ def get_player_info_dict(player_name):
             matching_players_dict[steam_id] = name
 
     if len(matching_players_dict) == 1:
-        return find_player_info(list(players_dict.keys())[0]), 0
+        return find_player_info(list(matching_players_dict.keys())[0]), 0
     else:
         return players_dict, 1
 
