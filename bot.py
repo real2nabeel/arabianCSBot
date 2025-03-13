@@ -17,8 +17,8 @@ async def load_cogs():
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()  # Sync commands to update the slash command list
+    await load_cogs() # load cogs
+    await bot.tree.sync()  # sync commands
     print(f"Logged in as {bot.user}")
-    await load_cogs()
 
 bot.run(TOKEN)
