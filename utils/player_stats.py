@@ -1,3 +1,7 @@
+"""
+This module provides functions to fetch and parse player statistics
+and leaderboards from rank.tornadosw.eu for a CS 1.6 server.
+"""
 import urllib
 
 import requests
@@ -5,6 +9,17 @@ from bs4 import BeautifulSoup
 import pandas as pd
 
 def search_player(player_search_query):
+    """
+    Searches for players on rank.tornadosw.eu based on a query.
+
+    Args:
+        player_search_query (str): The name or part of the name of the player to search for.
+
+    Returns:
+        dict: A dictionary mapping player IDs (str) to player names (str)
+              found matching the search query. Returns an empty dictionary if no
+              players are found or if an error occurs.
+    """
     initial_url = "http://rank.tornadosw.eu/top15.php?"
     params = {
         "lang": "en",
@@ -42,6 +57,18 @@ def search_player(player_search_query):
     return steam_player_dict
 
 def find_player_info(player_id):
+    """
+    Fetches detailed statistics for a specific player ID from rank.tornadosw.eu.
+
+    Args:
+        player_id (str): The unique ID of the player.
+
+    Returns:
+        dict: A dictionary containing various player statistics.
+              Keys include 'Name', 'Rank', 'K/D Ratio', 'Headshots', 'Played Time',
+              'Top Weapons', etc. Returns an empty dictionary if the player is not
+              found or if an error occurs.
+    """
     initial_url = "http://rank.tornadosw.eu/user.php"
     params = {
         "lang": "en",
@@ -103,6 +130,31 @@ def find_player_info(player_id):
     return player_info
 
 def get_player_info_dict(player_name):
+    """
+    Combines search_player and find_player_info to get stats for a player name.
+
+    It first searches for players matching the given name. If an exact single match
+    is found, it fetches detailed stats for that player. Otherwise, it returns
+    the list of found players.
+
+    Args:
+        player_name (str): The name of the player to get statistics for.
+
+    Returns:
+        tuple: (player_data, mode)
+            - player_data (dict):
+                - If mode is 0 (single exact match): Contains detailed player statistics
+                  from `find_player_info`.
+                - If mode is 1 (no exact match, multiple matches, or no players found):
+                  Contains the dictionary of players found by `search_player`
+                  (mapping player_id to player_name). This can be an empty dict
+                  if no players were found by the initial search.
+            - mode (int):
+                - 0 if a single player with an exact name match was found.
+                - 1 if no exact match was found (could be no players, or multiple
+                  players with different names, or multiple players with the same name
+                  that is not an exact match to player_name).
+    """
     players_dict = search_player(player_name)
     matching_players_dict = {}
     for steam_id, name in players_dict.items():
@@ -116,6 +168,18 @@ def get_player_info_dict(player_name):
 
 
 def get_top_players(page="1"):
+    """
+    Fetches a specific page of the server's leaderboard from rank.tornadosw.eu.
+
+    Args:
+        page (str, optional): The page number of the leaderboard to fetch. Defaults to "1".
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing the leaderboard data for the specified page.
+                          Columns include: 'Rank', 'XP', 'Name', 'Kills', 'Headshots',
+                          'Headshot Percentages', 'Skills'.
+                          Returns an empty DataFrame if an error occurs or the page is empty.
+    """
     url = "http://rank.tornadosw.eu/top15.php"
     params = {
         "lang": "en",

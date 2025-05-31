@@ -1,3 +1,6 @@
+"""
+This cog handles Counter-Strike server related commands and functionality.
+"""
 import a2s
 import discord
 from discord import app_commands
@@ -8,12 +11,23 @@ from utils.player_stats import get_player_info_dict, get_top_players
 from discord.ui import Button, View
 
 class CsLogic(commands.Cog):
+    """Contains commands for retrieving CS server information, player stats, and leaderboards."""
     def __init__(self, bot):
         self.bot = bot
 
 
     @app_commands.command(name="rankstats", description="Get stats for a player")
     async def rankstats(self, interaction: discord.Interaction, player_name: str):
+        """
+        Fetches and displays player statistics from rank.tornadosw.eu.
+
+        Args:
+            player_name (str): The name of the player to search for.
+
+        Responds in two modes:
+        - If a single player is found, displays their detailed statistics.
+        - If multiple players are found with similar names, prompts the user to be more specific.
+        """
         player_data, mode = get_player_info_dict(player_name)
 
         if not player_data:
@@ -75,6 +89,7 @@ class CsLogic(commands.Cog):
 
     @app_commands.command(name="ip", description="Returns an Embed of the Arabian IP")
     async def ip(self, interaction: discord.Interaction):
+        """Displays the server IP, a welcome message, and some server stats."""
         embed = discord.Embed(
             title="**Welcome to Arabian Servers!**",
             description="Have fun and enjoy your stay! 🎮",
@@ -111,6 +126,17 @@ class CsLogic(commands.Cog):
 
     @staticmethod
     def top_logic(page: int):
+        """
+        Fetches and formats a page of the leaderboard data from rank.tornadosw.eu.
+
+        Args:
+            page (int): The page number of the leaderboard to fetch.
+
+        Returns:
+            str: A formatted string representing the leaderboard page.
+                 The string is a code block containing a table with columns:
+                 Rank, XP, Name, Kills, Headshots, Headshot %, Skill.
+        """
         max_name_length = 15
         df = get_top_players(str(page))
 
@@ -133,6 +159,12 @@ class CsLogic(commands.Cog):
 
     @app_commands.command(name="top", description="Displays the current leaderboard")
     async def top(self, interaction: discord.Interaction, page: int = 1):
+        """
+        Displays a paginated leaderboard from rank.tornadosw.eu.
+
+        Args:
+            page (int, optional): The page number of the leaderboard to display. Defaults to 1.
+        """
         if page < 1:
             await interaction.response.send_message(
                 f"Page number must be higher than 1.",
@@ -146,6 +178,7 @@ class CsLogic(commands.Cog):
         next_button = Button(label="Next Page", style=discord.ButtonStyle.secondary)
 
         async def on_prev_button_click(interaction: discord.Interaction):
+            """Handles the 'Previous Page' button click, loading and displaying the previous page of the leaderboard."""
             nonlocal page
             if page > 1:
                 page -= 1
@@ -156,6 +189,7 @@ class CsLogic(commands.Cog):
             await interaction.response.edit_message(view=view)
 
         async def on_next_button_click(interaction: discord.Interaction):
+            """Handles the 'Next Page' button click, loading and displaying the next page of the leaderboard."""
             nonlocal page
             page += 1
             leaderboard_str = self.top_logic(page)
@@ -175,6 +209,7 @@ class CsLogic(commands.Cog):
 
     ####################### COMMAND DISABLED ###################################
 
+    # The 'players' command is currently disabled.
     # @commands.command(name="players", description="Returns a table of the current players")
     # async def players(self, interaction: discord.Interaction):
     #     players_list = []

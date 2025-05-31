@@ -1,13 +1,17 @@
+"""
+This cog handles various Discord server events.
+"""
 import discord
 from discord.ext import commands
 from utils.constants import LOGGING_CHANNEL_ID
 class Events(commands.Cog):
-    """Handles server events"""
+    """Contains event listeners for bot events like command errors."""
 
     def __init__(self, bot):
         self.bot = bot
 
     ################ EVENT DISABLED ######################
+    # The `on_member_join` event listener is currently disabled.
     # @commands.Cog.listener()
     # async def on_member_join(self, member):
     #     channel = member.guild.system_channel
@@ -16,6 +20,13 @@ class Events(commands.Cog):
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
+        """
+        Logs command errors to a designated logging channel.
+
+        Args:
+            ctx: The context in which the command was invoked.
+            error: The error that was raised.
+        """
         channel = self.bot.get_channel(LOGGING_CHANNEL_ID)
 
         embed = discord.Embed(
