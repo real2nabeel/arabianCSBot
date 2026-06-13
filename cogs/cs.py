@@ -216,13 +216,13 @@ class CsLogic(commands.Cog):
         # Name is placed last: player names can contain right-to-left or
         # non-monospace characters (e.g. Arabic) that would otherwise break
         # the alignment of every column after them.
-        header = "{:<5}{:<9}{:<8}{:<7}{:<7}{:<11}{}\n".format(
-            "#", "XP", "Kills", "HS", "HS%", "Skill", "Name")
-        table = header + "-" * 52 + "\n"
+        header = "{:<5}{:<8}{:<9}{:<8}{:<7}{:<11}{}\n".format(
+            "#", "K-D", "XP", "Kills", "HS", "Skill", "Name")
+        table = header + "-" * 56 + "\n"
         for row in players:
-            table += "{:<5}{:<9}{:<8}{:<7}{:<7}{:<11}{}\n".format(
-                row["Rank"], row["XP"], row["Kills"], row["Headshots"],
-                row["Headshot Percentages"], row["Skills"], _short_name(row["Name"]),
+            table += "{:<5}{:<8}{:<9}{:<8}{:<7}{:<11}{}\n".format(
+                row["Rank"], row["Diff"], row["XP"], row["Kills"], row["Headshots"],
+                row["Skills"], _short_name(row["Name"]),
             )
         if not players:
             table += "No players on this page.\n"
@@ -236,7 +236,7 @@ class CsLogic(commands.Cog):
             description=self._leaderboard_table(players),
             color=ARABIAN_COLOR,
         )
-        embed.set_footer(text=f"Page {page} / {max_page}  ·  {total:,} ranked players  ·  sorted by XP")
+        embed.set_footer(text=f"Page {page} / {max_page}  ·  {total:,} ranked players  ·  sorted by frag difference (K-D)")
         return embed, total
 
     @app_commands.command(name="top", description="Displays the current leaderboard")

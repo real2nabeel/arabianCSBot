@@ -1,8 +1,7 @@
 """Async MySQL data access layer for the Arabian CS 1.6 rank database.
 
-Replaces the old web-scraping layer (``player_stats.py``). All queries run
-against the ``rank_system`` and ``weapon_kills`` tables through an aiomysql
-connection pool so the Discord event loop is never blocked.
+All queries run against the ``rank_system`` and ``weapon_kills`` tables through
+an aiomysql connection pool so the Discord event loop is never blocked.
 """
 
 import aiomysql
@@ -22,6 +21,45 @@ WEAPON_COLUMNS = [
 WEAPON_LOOKUP = {w.lower(): w for w in WEAPON_COLUMNS}
 
 TOP_PAGE_SIZE = 15
+
+# Leaderboard ranking criteria, most significant first. Each entry is
+# (sql_expression, python_value_getter, "better"_operator). All numeric keys
+# rank higher-is-better (">"); the final Nick tiebreak is alphabetical ("<")
+# to make the ordering fully deterministic.
+RANK_KEYS = [
+    ("(COALESCE(`Kills`, 0) - COALESCE(`Deaths`, 0))",
+     lambda p: (p["Kills"] or 0) - (p["Deaths"] or 0), ">"),   # frag difference
+    ("COALESCE(`Assists`, 0)", lambda p: p["Assists"] or 0, ">"),
+    ("COALESCE(`Headshots`, 0)", lambda p: p["Headshots"] or 0, ">"),
+    ("COALESCE(`MVP`, 0)", lambda p: p["MVP"] or 0, ">"),
+    ("COALESCE(`Rounds Won`, 0)", lambda p: p["Rounds Won"] or 0, ">"),
+    ("COALESCE(`Planted`, 0)", lambda p: p["Planted"] or 0, ">"),
+    ("COALESCE(`Exploded`, 0)", lambda p: p["Exploded"] or 0, ">"),
+    ("COALESCE(`Defused`, 0)", lambda p: p["Defused"] or 0, ">"),
+    ("COALESCE(`XP`, 0)", lambda p: p["XP"] or 0, ">"),
+    ("`Nick`", lambda p: p["Nick"], "<"),
+]
+
+# ORDER BY clause matching RANK_KEYS (">" -> DESC, "<" -> ASC).
+LEADERBOARD_ORDER = ", ".join(
+    f"{expr} {'DESC' if op == '>' else 'ASC'}" for expr, _, op in RANK_KEYS
+)
+
+
+def _placement_where(player):
+    """Build a WHERE clause (and params) matching every player ranked strictly
+    above ``player`` under RANK_KEYS, so COUNT(*) + 1 yields their position."""
+    values = [getter(player) for _, getter, _ in RANK_KEYS]
+    terms, params = [], []
+    for i, (expr, _, op) in enumerate(RANK_KEYS):
+        conditions = []
+        for j in range(i):  # tie on every more-significant key
+            conditions.append(f"{RANK_KEYS[j][0]} = %s")
+            params.append(values[j])
+        conditions.append(f"{expr} {op} %s")  # and beat this one
+        params.append(values[i])
+        terms.append("(" + " AND ".join(conditions) + ")")
+    return " OR ".join(terms), params
 
 
 def format_played_time(seconds):
@@ -132,9 +170,10 @@ class Database:
         if not p:
             return None, -1
 
+        where, params = _placement_where(p)
         placement = await self.fetch_one(
-            "SELECT COUNT(*) + 1 AS pos FROM rank_system WHERE `XP` > %s",
-            (p["XP"] or 0,),
+            f"SELECT COUNT(*) + 1 AS pos FROM rank_system WHERE {where}",
+            params,
         )
         pos = placement["pos"] if placement else "?"
 
@@ -192,8 +231,8 @@ class Database:
         total = total_row["c"] if total_row else 0
 
         rows = await self.fetch_all(
-            "SELECT `Nick`, `XP`, `Kills`, `Headshots`, `Skill`, `Skill Range` "
-            "FROM rank_system ORDER BY `XP` DESC LIMIT %s OFFSET %s",
+            "SELECT `Nick`, `XP`, `Kills`, `Deaths`, `Headshots`, `Skill`, `Skill Range` "
+            f"FROM rank_system ORDER BY {LEADERBOARD_ORDER} LIMIT %s OFFSET %s",
             (per_page, offset),
         )
 
@@ -202,13 +241,15 @@ class Database:
             skill = (row["Skill"] or "").strip()
             skill_range = row["Skill Range"]
             skill_display = f"{skill} {skill_range}".strip() if skill else str(skill_range or "")
+            kills = row["Kills"] or 0
+            deaths = row["Deaths"] or 0
             players.append({
                 "Rank": offset + i + 1,
+                "Diff": kills - deaths,
                 "XP": row["XP"] or 0,
                 "Name": row["Nick"] or "Unknown",
-                "Kills": row["Kills"] or 0,
+                "Kills": kills,
                 "Headshots": row["Headshots"] or 0,
-                "Headshot Percentages": f"{hs_percentage(row['Headshots'], row['Kills'])}%",
                 "Skills": skill_display,
             })
 
