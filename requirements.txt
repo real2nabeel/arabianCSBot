@@ -2,3 +2,8 @@ discord.py==2.4.0
 python-a2s~=1.4.1
 aiomysql~=0.3.2
 python-dotenv~=1.2.2
+
+# Optional — only needed to reactivate the legacy web scraper (legacy/scraper.py)
+# requests~=2.32.3
+# beautifulsoup4~=4.13.3
+# pandas~=2.2.3

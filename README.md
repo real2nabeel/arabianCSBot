@@ -73,16 +73,38 @@ bot.py                 # Entry point — lifecycle, cog loading, command sync
 │   ├── cs.py           # Stats, leaderboards & server commands
 │   ├── events.py       # Centralized command-error logging
 │   └── moderation.py   # Moderation utilities
-└── utils/
-    ├── constants.py    # Environment-driven configuration
-    ├── database.py     # Async data-access layer (aiomysql pool)
-    └── utils.py        # Shared helpers
+├── utils/
+│   ├── constants.py    # Environment-driven configuration
+│   ├── database.py     # Async data-access layer (aiomysql pool)
+│   └── utils.py        # Shared helpers
+└── legacy/
+    └── scraper.py      # Original v1 web-scraping data source (inactive)
 ```
 
 The bot opens its database pool and loads all cogs in `setup_hook`, then closes
 the pool gracefully on shutdown. The data-access layer (`utils/database.py`)
 fully encapsulates SQL, exposing intent-revealing methods (`get_player_info`,
 `get_top_players`, `get_weapon_breakdown`, …) to the command layer.
+
+## Data Sources
+
+The bot is designed around two independent ways of reading player statistics:
+
+- **MySQL rank database (primary).** Stats are read directly from the game's
+  `rank_system` and `weapon_kills` tables through a fully asynchronous,
+  connection-pooled data layer (`utils/database.py`). Because it talks to the
+  database directly, it exposes the complete dataset and powers the richer
+  commands such as `/weaponstats`, `/compare`, and `/serverstats`.
+
+- **Web scraping ([`legacy/scraper.py`](legacy/scraper.py)).** A
+  `requests` + `BeautifulSoup` module that parses player stats from the public
+  rank webpage. It serves as an alternative source — useful when only the public
+  page is reachable — and demonstrates HTML parsing and resilient data
+  extraction. Enabling it requires the optional dependencies noted in
+  `requirements.txt`.
+
+Keeping the data access behind a clear interface lets the bot stay decoupled
+from any single source.
 
 ## Getting Started
 
