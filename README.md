@@ -46,15 +46,19 @@ or manual updates.
 
 ## Commands
 
+Every ranking command comes in two flavours: the plain command reads the
+**live** ranking (`liverank`), and the `-history` variant reads the
+**historical** ranking (`rankTest`).
+
 | Command | Description |
 | --- | --- |
-| `/rankstats <player>` | Detailed stats card: rank, K/D, headshots, accuracy, C4, top weapons, playtime |
-| `/top [page]` | Paginated XP leaderboard with interactive navigation |
-| `/online` | Players currently connected to the server |
-| `/weaponstats <player>` | Per-weapon kill and headshot breakdown |
-| `/compare <p1> <p2>` | Side-by-side head-to-head comparison |
-| `/topweapon <weapon>` | Top killers with a specific weapon (with autocomplete) |
-| `/serverstats` | Aggregate metrics across all registered players |
+| `/rankstats <player>` · `/rankstats-history <player>` | Detailed stats card: rank, K/D, headshots, accuracy, C4, top weapons, playtime |
+| `/top [page]` · `/top-history [page]` | Paginated XP leaderboard with interactive navigation |
+| `/online` | Players currently in the match — live from the game server (name, current-match frags, time connected) |
+| `/weaponstats <player>` · `/weaponstats-history <player>` | Per-weapon kill and headshot breakdown |
+| `/compare <p1> <p2>` · `/compare-history <p1> <p2>` | Side-by-side head-to-head comparison |
+| `/topweapon <weapon>` · `/topweapon-history <weapon>` | Top killers with a specific weapon (with autocomplete) |
+| `/serverstats` · `/serverstats-history` | Aggregate metrics across all registered players |
 | `/ip` | Server address and live player count |
 
 ## Tech Stack

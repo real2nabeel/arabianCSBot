@@ -30,11 +30,21 @@ SERVER_ADDRESS = (
     int(os.getenv("SERVER_PORT", "27015")),
 )
 
-# --- MySQL rank database -------------------------------------------------- #
-DB_CONFIG = {
+# --- MySQL rank databases ------------------------------------------------- #
+# Two schemas live on the same MySQL server, sharing host/credentials:
+#   * the LIVE ranking   (current season)  -> DB_NAME_LIVE   (default "liverank")
+#   * the HISTORICAL rank (all-time/legacy) -> DB_NAME        (default "rankTest")
+# Both have identical table structures (rank_system + weapon_kills), so the
+# same query layer is reused, just pointed at a different database name.
+_DB_BASE = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
     "port": int(os.getenv("DB_PORT", "3306")),
     "user": os.getenv("DB_USER", "root"),
     "password": os.getenv("DB_PASSWORD", ""),
-    "db": os.getenv("DB_NAME", "rankTest"),
 }
+
+DB_CONFIG_LIVE = {**_DB_BASE, "db": os.getenv("DB_NAME_LIVE", "liverank")}
+DB_CONFIG_HISTORY = {**_DB_BASE, "db": os.getenv("DB_NAME", "rankTest")}
+
+# Backwards-compatible default (live) for any single-DB callers.
+DB_CONFIG = DB_CONFIG_LIVE

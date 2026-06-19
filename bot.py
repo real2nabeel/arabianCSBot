@@ -3,7 +3,7 @@ import os
 import discord
 from discord.ext import commands
 
-from utils.constants import TOKEN, GUILD_ID
+from utils.constants import TOKEN, GUILD_ID, DB_CONFIG_LIVE, DB_CONFIG_HISTORY
 from utils.database import Database
 
 
@@ -12,12 +12,18 @@ class ArabianBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
-        self.db = Database()
+        # Two schemas on the same MySQL server: the live (current) ranking and
+        # the historical ranking. Each command has a live and a -history variant.
+        self.db_live = Database(DB_CONFIG_LIVE)
+        self.db_history = Database(DB_CONFIG_HISTORY)
+        # Default alias kept for any code that just wants "the" DB (live).
+        self.db = self.db_live
 
     async def setup_hook(self):
-        """Runs once before the bot connects. Opens the DB pool, loads cogs
+        """Runs once before the bot connects. Opens the DB pools, loads cogs
         and syncs the slash-command tree."""
-        await self.db.connect()
+        await self.db_live.connect()
+        await self.db_history.connect()
 
         for filename in os.listdir("./cogs"):
             if filename.endswith(".py"):
@@ -41,7 +47,8 @@ class ArabianBot(commands.Bot):
             await guild.leave()
 
     async def close(self):
-        await self.db.close()
+        await self.db_live.close()
+        await self.db_history.close()
         await super().close()
 
 

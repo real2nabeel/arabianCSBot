@@ -6,7 +6,7 @@ an aiomysql connection pool so the Discord event loop is never blocked.
 
 import aiomysql
 
-from utils.constants import DB_CONFIG
+from utils.constants import DB_CONFIG_LIVE
 
 # Weapon "kill" columns in the weapon_kills table (the headshot columns are
 # these same names suffixed with " HS").
@@ -94,7 +94,10 @@ def hs_percentage(headshots, kills):
 class Database:
     """Thin async wrapper around an aiomysql connection pool."""
 
-    def __init__(self):
+    def __init__(self, config=None):
+        # Each instance targets one schema (live or historical). Defaults to
+        # the live config so existing single-DB callers keep working.
+        self.config = config or DB_CONFIG_LIVE
         self.pool = None
 
     async def connect(self):
@@ -103,7 +106,7 @@ class Database:
             minsize=1,
             maxsize=5,
             charset="utf8mb4",
-            **DB_CONFIG,
+            **self.config,
         )
 
     async def close(self):
@@ -231,38 +234,22 @@ class Database:
         total = total_row["c"] if total_row else 0
 
         rows = await self.fetch_all(
-            "SELECT `Nick`, `XP`, `Kills`, `Deaths`, `Headshots`, `Skill`, `Skill Range` "
+            "SELECT `Nick`, `Kills`, `Deaths`, `Headshots` "
             f"FROM rank_system ORDER BY {LEADERBOARD_ORDER} LIMIT %s OFFSET %s",
             (per_page, offset),
         )
 
         players = []
         for i, row in enumerate(rows):
-            skill = (row["Skill"] or "").strip()
-            skill_range = row["Skill Range"]
-            skill_display = f"{skill} {skill_range}".strip() if skill else str(skill_range or "")
-            kills = row["Kills"] or 0
-            deaths = row["Deaths"] or 0
             players.append({
                 "Rank": offset + i + 1,
-                "Diff": kills - deaths,
-                "XP": row["XP"] or 0,
                 "Name": row["Nick"] or "Unknown",
-                "Kills": kills,
+                "Kills": row["Kills"] or 0,
+                "Deaths": row["Deaths"] or 0,
                 "Headshots": row["Headshots"] or 0,
-                "Skills": skill_display,
             })
 
         return players, total
-
-    # ------------------------------------------------------------------ #
-    # Online players (/online)
-    # ------------------------------------------------------------------ #
-    async def get_online_players(self):
-        return await self.fetch_all(
-            "SELECT `Nick`, `Rank Name`, `XP`, `Kills`, `Deaths` "
-            "FROM rank_system WHERE `Online` = 1 ORDER BY `XP` DESC"
-        )
 
     # ------------------------------------------------------------------ #
     # Weapon breakdown (/weaponstats)
