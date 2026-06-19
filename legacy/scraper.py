@@ -1,3 +1,14 @@
+"""Web-scraping data source.
+
+Fetches player stats by scraping the public rank webpage (rank.tornadosw.eu)
+with requests + BeautifulSoup. This is an alternative to the primary MySQL data
+layer in ``utils/database.py`` — useful when only the public page is reachable.
+
+It is self-contained and not wired into the running bot by default. Enabling it
+requires the optional scraping dependencies:
+    pip install requests beautifulsoup4 pandas
+"""
+
 import urllib
 
 import requests
