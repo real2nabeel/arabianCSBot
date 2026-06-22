@@ -346,11 +346,19 @@ class CsLogic(commands.Cog):
             await interaction.followup.send(embed=self._ambiguous_embed(data, player_name), ephemeral=True)
             return
 
-        table = "{:<12}{:<8}{:<7}{}\n".format("Weapon", "Kills", "HS", "HS%")
-        table += "-" * 33 + "\n"
-        for w in data["weapons"]:
-            hsp = round(w["hs"] / w["kills"] * 100, 1) if w["kills"] else 0.0
-            table += "{:<12}{:<8}{:<7}{}\n".format(w["weapon"], w["kills"], w["hs"], f"{hsp}%")
+        # The live schema has no per-weapon headshot data, so only render the
+        # HS / HS% columns when the breakdown actually carries headshot data.
+        if data.get("has_hs"):
+            table = "{:<12}{:<8}{:<7}{}\n".format("Weapon", "Kills", "HS", "HS%")
+            table += "-" * 33 + "\n"
+            for w in data["weapons"]:
+                hsp = round(w["hs"] / w["kills"] * 100, 1) if w["kills"] else 0.0
+                table += "{:<12}{:<8}{:<7}{}\n".format(w["weapon"], w["kills"], w["hs"], f"{hsp}%")
+        else:
+            table = "{:<12}{}\n".format("Weapon", "Kills")
+            table += "-" * 20 + "\n"
+            for w in data["weapons"]:
+                table += "{:<12}{}\n".format(w["weapon"], w["kills"])
         if not data["weapons"]:
             table += "No kills recorded.\n"
 
@@ -484,7 +492,6 @@ class CsLogic(commands.Cog):
         embed.set_thumbnail(url=ARABIAN_ICON)
 
         embed.add_field(name="👥 Registered Players", value=f"{s['total_players']:,}", inline=True)
-        embed.add_field(name="🟢 Online Now", value=f"{s['online']:,}", inline=True)
         embed.add_field(name="⏱️ Combined Playtime", value=format_played_time(s["playtime"]), inline=True)
 
         embed.add_field(name="💀 Total Kills", value=f"{kills:,}", inline=True)

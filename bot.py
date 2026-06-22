@@ -3,7 +3,9 @@ import os
 import discord
 from discord.ext import commands
 
-from utils.constants import TOKEN, GUILD_ID, DB_CONFIG_LIVE, DB_CONFIG_HISTORY
+from utils.constants import (
+    TOKEN, GUILD_ID, DB_CONFIG_LIVE, DB_CONFIG_HISTORY, DB_CONFIG_BOT,
+)
 from utils.database import Database
 
 
@@ -11,11 +13,18 @@ class ArabianBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
+        # Members intent (privileged — enable "Server Members Intent" in the
+        # Discord Developer Portal) is required so the leveling cog can resolve
+        # members and assign level roles reliably. voice_states is on by default.
+        intents.members = True
         super().__init__(command_prefix="!", intents=intents)
         # Two schemas on the same MySQL server: the live (current) ranking and
         # the historical ranking. Each command has a live and a -history variant.
         self.db_live = Database(DB_CONFIG_LIVE)
         self.db_history = Database(DB_CONFIG_HISTORY)
+        # Bot-owned schema for the Discord activity leveling system (XP, level
+        # roles) — kept separate from the game ranking data.
+        self.db_bot = Database(DB_CONFIG_BOT)
         # Default alias kept for any code that just wants "the" DB (live).
         self.db = self.db_live
 
@@ -24,6 +33,9 @@ class ArabianBot(commands.Bot):
         and syncs the slash-command tree."""
         await self.db_live.connect()
         await self.db_history.connect()
+        await self.db_bot.ensure_database_exists()
+        await self.db_bot.connect()
+        await self.db_bot.ensure_leveling_schema()
 
         for filename in os.listdir("./cogs"):
             if filename.endswith(".py"):
@@ -49,6 +61,7 @@ class ArabianBot(commands.Bot):
     async def close(self):
         await self.db_live.close()
         await self.db_history.close()
+        await self.db_bot.close()
         await super().close()
 
 
