@@ -11,3 +11,4 @@ venv/
 # IDE
 .idea/
 .vscode/
+/ddls.sql
