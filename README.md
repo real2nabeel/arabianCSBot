@@ -1,4 +1,4 @@
-<h1 align="center">Arabian Servers — CS 1.6 Discord Bot</h1>
+<h1 align="center">Arabian Servers CS 1.6 Discord Bot</h1>
 
 <p align="center">
   A Discord bot that surfaces live player statistics and leaderboards for the
@@ -18,43 +18,37 @@
 ## Overview
 
 Arabian Servers has run Counter-Strike 1.6 servers since 2013. This bot gives
-the community instant access to their stats inside Discord — ranks, K/D,
-weapon breakdowns, head-to-head comparisons and server-wide leaderboards —
-through modern Discord **slash commands**.
-
-Player data is read straight from the live rank database (`rank_system` and
-`weapon_kills`), so stats are always current with no scraping, caching layer,
-or manual updates.
+the community instant access to their stats inside Discord. This includes ranks, K/D,
+weapon breakdowns, comparisons between players and leaderboards
+through Discord **slash commands**.
 
 ## Features
 
-- **8 slash commands** covering individual stats, weapon analytics, player
+- **slash commands** covering individual stats, weapon analytics, player
   comparisons and global server metrics.
-- **Fully asynchronous I/O** — database access runs on an `aiomysql`
+- **Fully asynchronous I/O** database access runs on an `aiomysql`
   connection pool and game-server queries use async A2S, so the event loop is
   never blocked under load.
 - **Paginated leaderboards** via interactive Discord button components, with
   page-aware navigation controls.
-- **Fuzzy player resolution** — partial names resolve to a single player when
+- **Fuzzy player resolution** partial names resolve to a single player when
   unambiguous, or prompt the user to disambiguate.
-- **Live game-server integration** — real-time player counts pulled directly
+- **Live game-server integration** real-time player counts pulled directly
   from the CS 1.6 server over the A2S protocol.
 - **Modular cog architecture** with centralized error logging to a Discord
   channel.
-- **Secrets-free codebase** — all configuration (tokens, DB credentials) is
-  loaded from the environment.
 
 ## Commands
 
 Every ranking command comes in two flavours: the plain command reads the
-**live** ranking (`liverank`), and the `-history` variant reads the
-**historical** ranking (`rankTest`).
+**live** ranking, and the `-history` variant reads the
+**historical** ranking.
 
 | Command | Description |
 | --- | --- |
 | `/rankstats <player>` · `/rankstats-history <player>` | Detailed stats card: rank, K/D, headshots, accuracy, C4, top weapons, playtime |
 | `/top [page]` · `/top-history [page]` | Paginated XP leaderboard with interactive navigation |
-| `/online` | Players currently in the match — live from the game server (name, current-match frags, time connected) |
+| `/online` | Players currently in the match live from the game server (name, current-match frags, time connected) |
 | `/weaponstats <player>` · `/weaponstats-history <player>` | Per-weapon kill and headshot breakdown |
 | `/compare <p1> <p2>` · `/compare-history <p1> <p2>` | Side-by-side head-to-head comparison |
 | `/topweapon <weapon>` · `/topweapon-history <weapon>` | Top killers with a specific weapon (with autocomplete) |
@@ -64,15 +58,15 @@ Every ranking command comes in two flavours: the plain command reads the
 ## Tech Stack
 
 - **Python 3.12**
-- **[discord.py](https://discordpy.readthedocs.io/) 2.4** — slash commands, UI components, cogs
-- **[aiomysql](https://aiomysql.readthedocs.io/)** — asynchronous MySQL access with connection pooling
-- **[python-a2s](https://github.com/Yepoleb/python-a2s)** — Source/GoldSrc server queries
-- **[python-dotenv](https://github.com/theskumar/python-dotenv)** — environment-based configuration
+- **[discord.py](https://discordpy.readthedocs.io/) 2.4** slash commands, UI components, cogs
+- **[aiomysql](https://aiomysql.readthedocs.io/)** asynchronous MySQL access with connection pooling
+- **[python-a2s](https://github.com/Yepoleb/python-a2s)** Source/GoldSrc server queries
+- **[python-dotenv](https://github.com/theskumar/python-dotenv)** environment-based configuration
 
 ## Architecture
 
 ```
-bot.py                 # Entry point — lifecycle, cog loading, command sync
+bot.py                 # Entry point lifecycle, cog loading, command sync
 ├── cogs/
 │   ├── cs.py           # Stats, leaderboards & server commands
 │   ├── events.py       # Centralized command-error logging
@@ -94,16 +88,15 @@ fully encapsulates SQL, exposing intent-revealing methods (`get_player_info`,
 
 The bot is designed around two independent ways of reading player statistics:
 
-- **MySQL rank database (primary).** Stats are read directly from the game's
-  `rank_system` and `weapon_kills` tables through a fully asynchronous,
+- **MySQL rank database (primary).** Stats are read directly from the game's through a fully asynchronous,
   connection-pooled data layer (`utils/database.py`). Because it talks to the
   database directly, it exposes the complete dataset and powers the richer
   commands such as `/weaponstats`, `/compare`, and `/serverstats`.
 
 - **Web scraping ([`legacy/scraper.py`](legacy/scraper.py)).** A
   `requests` + `BeautifulSoup` module that parses player stats from the public
-  rank webpage. It serves as an alternative source — useful when only the public
-  page is reachable — and demonstrates HTML parsing and resilient data
+  rank webpage. It serves as an alternative source useful when only the public
+  page is reachable and demonstrates HTML parsing and resilient data
   extraction. Enabling it requires the optional dependencies noted in
   `requirements.txt`.
 
@@ -112,8 +105,7 @@ from any single source.
 
 ## Getting Started
 
-**Prerequisites:** Python 3.12+, a MySQL database containing the `rank_system`
-and `weapon_kills` tables, and a Discord bot token.
+**Prerequisites:** Python 3.12+, a MySQL database containing the player data, and a Discord bot token.
 
 ```bash
 # 1. Install dependencies (a virtual environment is recommended)
