@@ -119,6 +119,41 @@ cp .env.example .env
 python bot.py
 ```
 
+### Running with Docker
+
+**Prerequisites:** Docker with Compose v2.
+
+```bash
+# 1. Configure your environment
+cp .env.example .env
+#    then edit .env — note DB_HOST must not be 127.0.0.1 inside a container:
+#    use host.docker.internal for a MySQL on the host machine.
+
+# 2. Build and start
+docker compose up -d --build
+
+# 3. Follow the logs
+docker compose logs -f bot
+```
+
+Rebuild after code changes with `docker compose up -d --build`; stop with
+`docker compose down`.
+
+The compose file also ships an **optional MySQL service** for local
+development, disabled by default:
+
+```bash
+docker compose --profile local-db up -d
+```
+
+With it running, set `DB_HOST=mysql` in `.env`. The bot's own schema
+(`DB_NAME_BOT`) is created automatically on startup; the game ranking schemas
+must be imported yourself, for example:
+
+```bash
+docker compose exec -T mysql mysql -uroot -p"$DB_PASSWORD" rankTest < ddls.sql
+```
+
 ### Configuration
 
 All settings are provided through environment variables (see `.env.example`):

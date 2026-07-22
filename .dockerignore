@@ -1,0 +1,26 @@
+# Secrets — injected at runtime via compose `env_file`, never baked into the image
+.env
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# VCS / IDE / docs
+.git/
+.gitignore
+.idea/
+.vscode/
+.claude/
+README.md
+CLAUDE.md
+
+# Local-only artifacts. tests/ is kept in the image so the suite can be run
+# with: docker compose run --rm bot python -m unittest
+ddls.sql
+legacy/
+Dockerfile
+.dockerignore
+docker-compose.yml
