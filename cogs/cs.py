@@ -5,7 +5,9 @@ from discord.ext import commands
 from discord.ui import View, button
 
 from utils.constants import SERVER_ADDRESS
-from utils.database import WEAPON_COLUMNS, WEAPON_LOOKUP, TOP_PAGE_SIZE, format_played_time
+from utils.database import (
+    SEARCH_LIMIT, TOP_PAGE_SIZE, WEAPON_COLUMNS, WEAPON_LOOKUP, format_played_time,
+)
 
 ARABIAN_ICON = (
     "https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
@@ -105,14 +107,22 @@ class CsLogic(commands.Cog):
     # /rankstats  (live)  ·  /rankstats-history  (historical)
     # ------------------------------------------------------------------ #
     @app_commands.command(name="rankstats", description="Get a player's LIVE rank stats")
-    @app_commands.describe(player_name="Exact in-game nickname (case-sensitive)")
+    @app_commands.describe(player_name="Player nickname — partial names work; pick a suggestion")
     async def rankstats(self, interaction: discord.Interaction, player_name: str):
         await self._send_rankstats(interaction, self.db_live, "Live", player_name)
 
     @app_commands.command(name="rankstats-history", description="Get a player's HISTORICAL rank stats")
-    @app_commands.describe(player_name="Exact in-game nickname (case-sensitive)")
+    @app_commands.describe(player_name="Player nickname — partial names work; pick a suggestion")
     async def rankstats_history(self, interaction: discord.Interaction, player_name: str):
         await self._send_rankstats(interaction, self.db_history, "Historical", player_name)
+
+    @rankstats.autocomplete("player_name")
+    async def rankstats_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_choices(self.db_live, current)
+
+    @rankstats_history.autocomplete("player_name")
+    async def rankstats_history_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_choices(self.db_history, current)
 
     async def _send_rankstats(self, interaction, db, label, player_name):
         await interaction.response.defer()
@@ -181,11 +191,22 @@ class CsLogic(commands.Cog):
             title += f" “{query}”"
         embed = discord.Embed(
             title=title,
-            description="Please re-enter a more precise name (case-sensitive):",
+            description="Re-run the command and pick one of these from the suggestions:",
             color=discord.Color.red(),
         )
         embed.add_field(name="Did you mean…", value="`" + "`, `".join(str(n) for n in player_names) + "`")
         return embed
+
+    async def _player_choices(self, db, current):
+        """Nickname suggestions for a player option. Autocomplete has a hard
+        3s budget and no way to report an error, so a slow or failing lookup
+        just yields an empty list and leaves the user free-typing."""
+        try:
+            names = await db.search_players(current, limit=SEARCH_LIMIT)
+        except Exception:
+            return []
+        # Discord caps a choice name/value at 100 characters.
+        return [app_commands.Choice(name=n[:100], value=n[:100]) for n in names]
 
     async def _resolve_player_or_report(self, interaction, db, name):
         """Resolve a player name against ``db``, or send a not-found /
@@ -194,7 +215,8 @@ class CsLogic(commands.Cog):
         data, mode = await db.get_player_info(name)
         if mode == -1 or not data:
             await interaction.followup.send(
-                f"Player **{name}** could not be found. Make sure you enter a real player name.",
+                f"No player matching **{name}** is in this ranking. "
+                "Try a shorter part of the nickname and pick from the suggestions.",
                 ephemeral=True,
             )
             return None
@@ -328,12 +350,22 @@ class CsLogic(commands.Cog):
     # /weaponstats
     # ------------------------------------------------------------------ #
     @app_commands.command(name="weaponstats", description="LIVE weapon kill breakdown for a player")
+    @app_commands.describe(player_name="Player nickname — partial names work; pick a suggestion")
     async def weaponstats(self, interaction: discord.Interaction, player_name: str):
         await self._send_weaponstats(interaction, self.db_live, "Live", player_name)
 
     @app_commands.command(name="weaponstats-history", description="HISTORICAL weapon kill breakdown for a player")
+    @app_commands.describe(player_name="Player nickname — partial names work; pick a suggestion")
     async def weaponstats_history(self, interaction: discord.Interaction, player_name: str):
         await self._send_weaponstats(interaction, self.db_history, "Historical", player_name)
+
+    @weaponstats.autocomplete("player_name")
+    async def weaponstats_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_choices(self.db_live, current)
+
+    @weaponstats_history.autocomplete("player_name")
+    async def weaponstats_history_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_choices(self.db_history, current)
 
     async def _send_weaponstats(self, interaction, db, label, player_name):
         await interaction.response.defer()
@@ -386,12 +418,32 @@ class CsLogic(commands.Cog):
         )
 
     @app_commands.command(name="compare", description="Compare two players head-to-head (live ranking)")
+    @app_commands.describe(player_one="Player nickname — partial names work; pick a suggestion",
+                           player_two="Player nickname — partial names work; pick a suggestion")
     async def compare(self, interaction: discord.Interaction, player_one: str, player_two: str):
         await self._send_compare(interaction, self.db_live, "Live", player_one, player_two)
 
     @app_commands.command(name="compare-history", description="Compare two players head-to-head (historical ranking)")
+    @app_commands.describe(player_one="Player nickname — partial names work; pick a suggestion",
+                           player_two="Player nickname — partial names work; pick a suggestion")
     async def compare_history(self, interaction: discord.Interaction, player_one: str, player_two: str):
         await self._send_compare(interaction, self.db_history, "Historical", player_one, player_two)
+
+    @compare.autocomplete("player_one")
+    async def compare_one_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_choices(self.db_live, current)
+
+    @compare.autocomplete("player_two")
+    async def compare_two_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_choices(self.db_live, current)
+
+    @compare_history.autocomplete("player_one")
+    async def compare_history_one_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_choices(self.db_history, current)
+
+    @compare_history.autocomplete("player_two")
+    async def compare_history_two_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._player_choices(self.db_history, current)
 
     async def _send_compare(self, interaction, db, label, player_one, player_two):
         await interaction.response.defer()

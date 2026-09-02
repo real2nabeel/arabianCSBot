@@ -4,6 +4,9 @@ All queries run against the ``rank_system`` and ``weapon_kills`` tables through
 an aiomysql connection pool so the Discord event loop is never blocked.
 """
 
+import difflib
+import re
+
 import aiomysql
 
 from utils.constants import DB_CONFIG_LIVE
@@ -23,6 +26,83 @@ WEAPON_COLUMNS = [
 WEAPON_LOOKUP = {w.lower(): w for w in WEAPON_COLUMNS}
 
 TOP_PAGE_SIZE = 15
+
+# Player search tuning. SEARCH_LIMIT also caps the autocomplete list (Discord
+# allows at most 25 choices), SUGGESTION_LIMIT the "did you mean" embed.
+SEARCH_LIMIT = 25
+SUGGESTION_LIMIT = 10
+
+# A fuzzy candidate is accepted outright only when it is both a strong match
+# and clearly better than the runner-up, so a typo resolves but a genuinely
+# ambiguous query still asks.
+FUZZY_ACCEPT = 0.8
+FUZZY_ACCEPT_GAP = 0.1
+FUZZY_LONE_ACCEPT = 0.6
+FUZZY_SUGGEST = 0.4
+
+# LIKE wildcards in user input must be escaped or a "%" matches every player.
+# Backslash is MySQL's default LIKE escape character.
+_LIKE_ESCAPES = str.maketrans({"\\": "\\\\", "%": "\\%", "_": "\\_"})
+
+
+def escape_like(text):
+    r"""Escape LIKE wildcards so `%`, `_` and `\` are matched literally."""
+    return (text or "").translate(_LIKE_ESCAPES)
+
+
+def normalize_nick(text):
+    r"""Fold a nickname to its bare letters/digits, lowercased.
+
+    Player nicks are full of clan tags and decoration (``[AR]*Nabeel*``,
+    ``n a b e e l``); normalizing both sides lets someone type just the name.
+    ``\W`` is Unicode-aware, so Arabic nicks survive this untouched.
+    """
+    return re.sub(r"[\W_]+", "", (text or "").lower(), flags=re.UNICODE)
+
+
+def nick_tokens(text):
+    """The normalized words of a nick: ``"[AR]*Nabeel*"`` -> ``["ar", "nabeel"]``.
+
+    Matching per token is what lets someone type the bare name of a player who
+    wears a clan tag, without that losing to a longer nick that merely starts
+    with the same letters.
+    """
+    return [t for t in re.split(r"[\W_]+", (text or "").lower(), flags=re.UNICODE) if t]
+
+
+def subsequence_pattern(text):
+    """LIKE pattern matching nicks containing these characters *in order*.
+
+    Used only after a plain substring search finds nothing: it is a cheap,
+    typo-tolerant last resort ("nbeel" -> ``%n%b%e%e%l%``).
+    """
+    chars = [escape_like(c) for c in (text or "") if not c.isspace()]
+    return "%" + "%".join(chars) + "%" if chars else "%"
+
+
+def similarity(query, nick):
+    """0..1 closeness of a nick to a search string, compared on normalized
+    forms so decoration doesn't count against the match."""
+    q, n = normalize_nick(query), normalize_nick(nick)
+    if not q or not n:
+        return 0.0
+    score = difflib.SequenceMatcher(None, q, n).ratio()
+    if n.startswith(q):
+        score = max(score, 0.85)
+    elif q in n:
+        score = max(score, 0.75)
+    return score
+
+
+def rank_by_similarity(name, rows):
+    """Sort candidate rows by closeness to ``name`` (XP breaks ties).
+
+    Returns a list of ``(score, row)``, best first.
+    """
+    scored = [(similarity(name, row["Nick"]), row) for row in rows]
+    scored.sort(key=lambda item: (-item[0], -(item[1].get("XP") or 0)))
+    return scored
+
 
 # Leaderboard ranking criteria, most significant first. Each entry is
 # (sql_expression, python_value_getter, "better"_operator). All numeric keys
@@ -157,30 +237,127 @@ class Database:
     # ------------------------------------------------------------------ #
     # Player resolution
     # ------------------------------------------------------------------ #
+    async def _search_rows(self, name, limit=SEARCH_LIMIT):
+        """Candidate rows for ``name``, best match first.
+
+        Returns ``(rows, fuzzy)``. The first pass is a substring search ordered
+        by match quality (exact nick, then prefix, then anywhere) and XP, so the
+        row the user meant is never pushed off the end of the LIMIT by a more
+        active player who merely contains the string. Only when that finds
+        nothing do we fall back to the typo-tolerant subsequence scan, flagged
+        by ``fuzzy`` so the caller scores those results before trusting them.
+        """
+        pattern = escape_like(name)
+        rows = await self.fetch_all(
+            "SELECT `Player`, `Nick`, COALESCE(`XP`, 0) AS `XP`, "
+            "  CASE WHEN `Nick` = %s THEN 0 "
+            "       WHEN `Nick` LIKE %s THEN 1 "
+            "       ELSE 2 END AS `match_rank` "
+            "FROM rank_system WHERE `Nick` LIKE %s "
+            "ORDER BY `match_rank` ASC, `XP` DESC LIMIT %s",
+            (name, f"{pattern}%", f"%{pattern}%", limit),
+        )
+        if rows:
+            return rows, False
+
+        rows = await self.fetch_all(
+            "SELECT `Player`, `Nick`, COALESCE(`XP`, 0) AS `XP` "
+            "FROM rank_system WHERE `Nick` LIKE %s ORDER BY `XP` DESC LIMIT %s",
+            (subsequence_pattern(name), limit * 2),
+        )
+        return rows, True
+
     async def resolve_player(self, name):
         """Resolve a search string to a single player.
+
+        Matching is deliberately forgiving — partial names, any casing, missing
+        clan tags or decoration, and small typos all resolve — because players
+        are picked out of chat by nickname, not copied character-for-character.
 
         Returns ``(player_key, nick, mode)`` where mode is:
           * ``0``  -> unambiguous match (player_key + nick set)
           * ``1``  -> ambiguous; ``nick`` is a list of candidate nicknames
           * ``-1`` -> no match at all
         """
-        rows = await self.fetch_all(
-            "SELECT `Player`, `Nick` FROM rank_system "
-            "WHERE `Nick` LIKE %s ORDER BY `XP` DESC LIMIT 25",
-            (f"%{name}%",),
-        )
+        name = (name or "").strip()
+        if not name:
+            return None, None, -1
+
+        rows, fuzzy = await self._search_rows(name)
         if not rows:
             return None, None, -1
 
-        if len(rows) == 1:
-            return rows[0]["Player"], rows[0]["Nick"], 0
+        if not fuzzy:
+            # Rows are ordered best-match-then-XP, so the first hit of each pass
+            # is the most active player that qualifies. Several players really
+            # can share a nick, so an exact match resolves to the top-ranked one
+            # instead of being ambiguous forever.
+            for candidates in (
+                [r for r in rows if (r["Nick"] or "").lower() == name.lower()],
+                [r for r in rows if normalize_nick(r["Nick"]) == normalize_nick(name)],
+            ):
+                if candidates:
+                    return candidates[0]["Player"], candidates[0]["Nick"], 0
 
-        exact = [r for r in rows if r["Nick"] == name]
-        if len(exact) == 1:
-            return exact[0]["Player"], exact[0]["Nick"], 0
+            if len(rows) == 1:
+                return rows[0]["Player"], rows[0]["Nick"], 0
 
-        return None, [r["Nick"] for r in rows], 1
+            # Then one word of the nick, whole or as a prefix — but only when a
+            # single player qualifies, otherwise the query is genuinely between
+            # two players and they should get to choose.
+            query = normalize_nick(name)
+            for match in (lambda token: token == query, lambda token: token.startswith(query)):
+                narrowed = [r for r in rows if any(map(match, nick_tokens(r["Nick"])))]
+                if len(narrowed) == 1:
+                    return narrowed[0]["Player"], narrowed[0]["Nick"], 0
+
+            return None, [r["Nick"] for r in rows[:SUGGESTION_LIMIT]], 1
+
+        # Fuzzy fallback: nothing contained the string, so only accept a
+        # candidate that stands clearly apart from the rest.
+        scored = rank_by_similarity(name, rows)
+        best_score, best = scored[0]
+        runner_up = scored[1][0] if len(scored) > 1 else 0.0
+        if best_score >= FUZZY_ACCEPT and best_score - runner_up >= FUZZY_ACCEPT_GAP:
+            return best["Player"], best["Nick"], 0
+
+        close = [(score, row) for score, row in scored[:SUGGESTION_LIMIT]
+                 if score >= FUZZY_SUGGEST]
+        if not close:
+            return None, None, -1
+        if len(close) == 1 and close[0][0] >= FUZZY_LONE_ACCEPT:
+            return close[0][1]["Player"], close[0][1]["Nick"], 0
+        return None, [row["Nick"] for _, row in close], 1
+
+    async def search_players(self, query, limit=SEARCH_LIMIT):
+        """Nickname suggestions for slash-command autocomplete, best first.
+
+        An empty query offers the leaderboard's top players so the dropdown is
+        never blank before the user types.
+        """
+        query = (query or "").strip()
+        if not query:
+            rows = await self.fetch_all(
+                "SELECT `Nick` FROM rank_system "
+                "WHERE `Nick` IS NOT NULL AND `Nick` <> '' "
+                f"ORDER BY {LEADERBOARD_ORDER} LIMIT %s",
+                (limit,),
+            )
+        else:
+            rows, fuzzy = await self._search_rows(query, limit)
+            if fuzzy:
+                rows = [row for score, row in rank_by_similarity(query, rows)
+                        if score >= FUZZY_SUGGEST]
+
+        # Distinct nicks only: players sharing a nick would render as identical
+        # (and unpickable) duplicate choices.
+        seen, names = set(), []
+        for row in rows:
+            nick = (row["Nick"] or "").strip()
+            if nick and nick.lower() not in seen:
+                seen.add(nick.lower())
+                names.append(nick)
+        return names[:limit]
 
     # ------------------------------------------------------------------ #
     # Player stats (/rankstats)
