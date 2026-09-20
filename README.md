@@ -70,7 +70,7 @@ bot.py                 # Entry point lifecycle, cog loading, command sync
 ├── cogs/
 │   ├── cs.py           # Stats, leaderboards & server commands
 │   ├── events.py       # Centralized command-error logging
-│   └── moderation.py   # Moderation utilities
+│   └── server_management.py # Event logs, welcomes, automatic roles
 ├── utils/
 │   ├── constants.py    # Environment-driven configuration
 │   ├── database.py     # Async data-access layer (aiomysql pool)
@@ -166,3 +166,49 @@ All settings are provided through environment variables (see `.env.example`):
 | `DB_HOST` / `DB_PORT` | MySQL host and port |
 | `DB_USER` / `DB_PASSWORD` | MySQL credentials |
 | `DB_NAME` | Rank database name |
+
+## Server management
+
+The bot also provides server event logs, welcome messages, and automatic member
+roles. Use Discord's built-in tools for moderation. Settings are read from `.env` on startup; copy the
+server-management section from `.env.example` and restart the bot after editing.
+No ProBot settings, messages, or XP are imported automatically.
+
+| Setting | Purpose |
+| --- | --- |
+| `SERVER_LOG_CHANNEL_ID` | Private staff channel for server events; blank disables event logging |
+| `MOD_LOG_CHANNEL_ID` | Optional separate channel for ban/unban events; blank uses the server log channel |
+| `LOG_EXCLUDED_CHANNELS` | Comma-separated channel or category IDs to exclude from message logs, including child threads |
+| `WELCOME_CHANNEL_ID` | Welcome channel; blank disables welcomes |
+| `WELCOME_MESSAGE` | Text with `{mention}`, `{user}`, `{server}`, and `{count}` placeholders; maximum output is 2,000 characters |
+| `AUTO_ROLE_IDS` | Comma-separated roles for new human members; blank disables assignment |
+
+Server logs cover joins/leaves, nickname/member-role/timeout changes,
+message edits/deletions/bulk deletions, bans/unbans, and channel/role creation,
+updates, and deletion. Log messages never ping members or roles. Both configured
+log channels are excluded from message logging. Content of uncached deleted
+messages, and the previous content of uncached edited messages, is unavailable;
+the bot records the event IDs instead. Bulk deletions produce a count/ID summary.
+These are live event logs, not a message archive or a replay of events missed
+while the bot was offline. External changes do not guess the responsible staff
+member. Ban/unban and timeout events are still logged when staff use Discord's
+built-in moderation tools; the bot does not issue punishments or maintain cases.
+
+Welcomes are plain text and can mention only the joining member. Automatic
+roles skip bots, managed roles, `@everyone`, staff-capability roles, and roles at
+or above the bot. Assignment waits for membership screening to finish. Roles
+are assigned on join or a live screening-completion event, not retroactively
+to existing members. A restart does not backfill joins/screening missed offline.
+
+Enable **Server Members Intent** and **Message Content Intent** in the Discord
+Developer Portal (the bot already requests both). Give the bot View Channel,
+Send Messages, and Embed Links in log channels, plus View Channel and Send
+Messages in the welcome channel. Automatic roles require Manage Roles with
+the bot's highest role above each assigned role. Keep log channels
+restricted to staff because they can contain deleted message content.
+
+Before removing ProBot, configure these IDs and verify a welcome, screened
+role assignment, and message edit/delete logging in your server. Avoid duplicate welcomes/roles by disabling those ProBot modules
+when the replacements are enabled. Local tests do not validate live permissions.
+
+Run offline tests with `.venv/Scripts/python.exe -m unittest discover -s tests`.

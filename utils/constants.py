@@ -86,3 +86,13 @@ XP_EXCLUDED_CHANNELS = _id_list_env("XP_EXCLUDED_CHANNELS")
 # where the message that triggered the level-up was sent (and stays silent for
 # voice level-ups).
 LEVELUP_CHANNEL_ID = _int_env("LEVELUP_CHANNEL_ID")
+
+# Server management. Zero/empty channel IDs disable the corresponding feature.
+SERVER_LOG_CHANNEL_ID = _int_env("SERVER_LOG_CHANNEL_ID")
+MOD_LOG_CHANNEL_ID = _int_env("MOD_LOG_CHANNEL_ID", SERVER_LOG_CHANNEL_ID)
+LOG_EXCLUDED_CHANNELS = _id_list_env("LOG_EXCLUDED_CHANNELS")
+WELCOME_CHANNEL_ID = _int_env("WELCOME_CHANNEL_ID")
+WELCOME_MESSAGE = os.getenv(
+    "WELCOME_MESSAGE", "Welcome {mention} to {server}! Please read the server rules."
+)
+AUTO_ROLE_IDS = _id_list_env("AUTO_ROLE_IDS")
