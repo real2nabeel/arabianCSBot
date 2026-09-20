@@ -171,7 +171,10 @@ All settings are provided through environment variables (see `.env.example`):
 
 The bot also provides server event logs, welcome messages, and automatic member
 roles. Use Discord's built-in tools for moderation. Settings are read from `.env` on startup; copy the
-server-management section from `.env.example` and restart the bot after editing.
+server-management section from `.env.example` and restart the Python process after editing.
+For Docker, recreate the container to load changed environment variables; a plain
+`docker compose restart` retains the container's old environment. Deploy code
+and configuration changes together with `docker compose up -d --build --force-recreate bot`.
 No ProBot settings, messages, or XP are imported automatically.
 
 | Setting | Purpose |
@@ -212,3 +215,16 @@ role assignment, and message edit/delete logging in your server. Avoid duplicate
 when the replacements are enabled. Local tests do not validate live permissions.
 
 Run offline tests with `.venv/Scripts/python.exe -m unittest discover -s tests`.
+
+If message logs never appear, check `docker compose logs --tail=100 bot` after
+recreating the container. Check that the bot can view the source channel and has
+View Channel, Send Messages, and Embed Links permissions in the log channel.
+Test using a human member's message in a normal channel the bot can view; the
+log channels themselves are excluded. Setting names use plain underscores,
+for example `SERVER_LOG_CHANNEL_ID`, without Markdown backslashes.
+
+Message edit/delete logs show author mentions, channel mentions, and distinct
+code blocks for message content (long content is marked as truncated). Edits
+include a jump-to-message link; deletions link to the channel because the deleted
+message is no longer accessible. Author avatars are shown when cached. Mentions
+in logs do not send notifications.

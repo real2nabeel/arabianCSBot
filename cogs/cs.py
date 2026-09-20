@@ -4,17 +4,13 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, button
 
+from utils.embeds import make_embed, BRAND_COLOR
 from utils.constants import SERVER_ADDRESS
 from utils.database import (
     SEARCH_LIMIT, TOP_PAGE_SIZE, WEAPON_COLUMNS, WEAPON_LOOKUP, format_played_time,
 )
 
-ARABIAN_ICON = (
-    "https://cdn.discordapp.com/attachments/1098525304886153277/1336576486966038598/"
-    "arabian2016p1440.jpg?ex=67a44f5a&is=67a2fdda&hm="
-    "39a671b0c53cc993d4c606e0ce0309f450a318c264c3778f9b8efd21360edad4&"
-)
-ARABIAN_COLOR = discord.Color.from_rgb(230, 145, 30)
+ARABIAN_COLOR = BRAND_COLOR
 
 
 def _valid_url(url):
@@ -131,8 +127,9 @@ class CsLogic(commands.Cog):
             return
 
         online = p["Online"]
-        embed = discord.Embed(
-            title=f"{p['Name']} — {label} Player Stats",
+        embed = make_embed(section="CS 1.6",
+            title=f"{p['Name']} — Player stats",
+            description=f"**{label} ranking** · " + ("🟢 Online now" if online else "⚫ Offline"),
             color=discord.Color.green() if online else ARABIAN_COLOR,
             url=p["Profile"] if _valid_url(p["Profile"]) else None,
         )
@@ -145,25 +142,17 @@ class CsLogic(commands.Cog):
         embed.add_field(name="⭐ XP", value=f"{p['XP']:,}", inline=True)
         embed.add_field(name="🎮 Level", value=f"{p['Level']}", inline=True)
 
-        # Row 2 — combat core
-        embed.add_field(name="🎯 K/D Ratio", value=f"{p['K/D Ratio']}", inline=True)
-        embed.add_field(name="💀 Kills", value=f"{p['Kills']:,}", inline=True)
-        embed.add_field(name="☠️ Deaths", value=f"{p['Deaths']:,}", inline=True)
-
-        # Row 3 — accuracy
-        embed.add_field(name="🩸 Headshots", value=f"{p['Headshots']:,} ({p['Headshot %']}%)", inline=True)
-        embed.add_field(name="🤝 Assists", value=f"{p['Assists']:,}", inline=True)
-        embed.add_field(name="💥 Damage", value=f"{p['Damage']:,}", inline=True)
-
-        # Row 4 — output
-        embed.add_field(name="🔫 Shots", value=f"{p['Shots']:,}", inline=True)
-        embed.add_field(name="✅ Hits", value=f"{p['Hits']:,}", inline=True)
-        embed.add_field(name="🏆 MVP", value=f"{p['Most Valuable Player']:,}", inline=True)
-
-        # Row 5 — objectives
-        embed.add_field(name="💣 Planted", value=f"{p['C4 Planted']:,}", inline=True)
-        embed.add_field(name="💥 Exploded", value=f"{p['C4 Exploded']:,}", inline=True)
-        embed.add_field(name="🛡️ Defused", value=f"{p['C4 Defused']:,}", inline=True)
+        embed.add_field(name="⚔️ Combat", value=(
+            f"**{p['Kills']:,}** kills · **{p['Deaths']:,}** deaths\n"
+            f"**{p['K/D Ratio']}** K/D · **{p['Assists']:,}** assists"), inline=True)
+        embed.add_field(name="🎯 Accuracy", value=(
+            f"**{p['Headshots']:,}** headshots ({p['Headshot %']}%)\n"
+            f"**{p['Hits']:,}** hits / **{p['Shots']:,}** shots"), inline=True)
+        embed.add_field(name="🏆 Impact", value=(
+            f"**{p['Damage']:,}** damage\n**{p['Most Valuable Player']:,}** MVP awards"), inline=True)
+        embed.add_field(name="💣 Objectives", value=(
+            f"**{p['C4 Planted']:,}** planted · **{p['C4 Exploded']:,}** exploded\n"
+            f"**{p['C4 Defused']:,}** defused · **{p['Rounds Won']:,}** rounds won"), inline=False)
 
         # Top weapons (monospace, ASCII weapon names so alignment is safe)
         if p["Top Weapons"]:
@@ -173,13 +162,9 @@ class CsLogic(commands.Cog):
             )
             embed.add_field(name="🔝 Top Weapons", value=f"```\n{lines}\n```", inline=False)
 
-        # Activity
-        embed.add_field(name="⏱️ Played Time", value=p["Played Time"], inline=True)
-        embed.add_field(name="🥇 Rounds Won", value=f"{p['Rounds Won']:,}", inline=True)
-        embed.add_field(name="​", value="​", inline=True)  # row filler
-        embed.add_field(name="📅 First Login", value=p["First Login"], inline=True)
-        embed.add_field(name="📅 Last Login", value=p["Last Login"], inline=True)
-        embed.add_field(name="​", value="​", inline=True)  # row filler
+        embed.add_field(name="⏱️ Playtime", value=p["Played Time"], inline=True)
+        embed.add_field(name="First seen", value=p["First Login"], inline=True)
+        embed.add_field(name="Last seen", value=p["Last Login"], inline=True)
 
         embed.set_footer(text=f"{label} ranking · " + ("🟢 Online now" if online else "⚫ Offline"))
         await interaction.followup.send(embed=embed)
@@ -189,7 +174,7 @@ class CsLogic(commands.Cog):
         title = "🔎 Multiple players matched"
         if query:
             title += f" “{query}”"
-        embed = discord.Embed(
+        embed = make_embed(section="CS 1.6",
             title=title,
             description="Re-run the command and pick one of these from the suggestions:",
             color=discord.Color.red(),
@@ -231,16 +216,16 @@ class CsLogic(commands.Cog):
     @app_commands.command(name="ip", description="Returns an Embed of the Arabian IP")
     async def ip(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        embed = discord.Embed(
+        embed = make_embed(section="CS 1.6",
             title="Welcome to Arabian Servers!",
             description="Have fun and enjoy your stay! 🎮",
             color=ARABIAN_COLOR,
             url="https://arabian-servers.com",
         )
-        embed.set_author(name="JOIN US!", icon_url=ARABIAN_ICON)
-        embed.set_thumbnail(url=ARABIAN_ICON)
+        if interaction.guild and interaction.guild.icon:
+            embed.set_thumbnail(url=interaction.guild.icon.url)
 
-        embed.add_field(name="🔥 Server IP", value="`151.80.47.182:27015`", inline=True)
+        embed.add_field(name="🔥 Server IP", value=f"`{SERVER_ADDRESS[0]}:{SERVER_ADDRESS[1]}`", inline=True)
         embed.add_field(name="📅 Running Since", value="2013", inline=True)
 
         try:
@@ -253,7 +238,7 @@ class CsLogic(commands.Cog):
         embed.add_field(name="🌍 Website",
                         value="[arabian-servers.com](https://arabian-servers.com)", inline=False)
 
-        embed.set_footer(text="Arabian Servers for CS 1.6 since 2013 🕹️", icon_url=ARABIAN_ICON)
+        embed.set_footer(text="Arabian Servers • Playing since 2013")
         await interaction.followup.send(embed=embed)
 
     # ------------------------------------------------------------------ #
@@ -278,7 +263,7 @@ class CsLogic(commands.Cog):
     async def build_top_embed(self, page: int, db, label):
         players, total = await db.get_top_players(page)
         max_page = max(1, -(-total // TOP_PAGE_SIZE))
-        embed = discord.Embed(
+        embed = make_embed(section="CS 1.6",
             title=f"🏆 {label} Leaderboard — Top Players",
             description=self._leaderboard_table(players),
             color=ARABIAN_COLOR,
@@ -324,7 +309,7 @@ class CsLogic(commands.Cog):
         players.sort(key=lambda p: p.score, reverse=True)
 
         if not players:
-            embed = discord.Embed(
+            embed = make_embed(section="CS 1.6",
                 title="🟢 Online Players",
                 description="No players are in the server right now.",
                 color=ARABIAN_COLOR,
@@ -332,13 +317,13 @@ class CsLogic(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        table = "{:<20}{:<8}{}\n".format("Name", "Frags", "Time")
+        table = "{:<8}{:<8}{}\n".format("Frags", "Time", "Name")
         table += "-" * 36 + "\n"
         for p in players:
-            table += "{:<20}{:<8}{}\n".format(
-                _short_name(p.name), int(p.score), _format_session(p.duration))
+            table += "{:<8}{:<8}{}\n".format(
+                int(p.score), _format_session(p.duration), _short_name(p.name))
 
-        embed = discord.Embed(
+        embed = make_embed(section="CS 1.6",
             title="🟢 Online Players",
             description=f"```\n{table}```",
             color=discord.Color.green(),
@@ -394,7 +379,7 @@ class CsLogic(commands.Cog):
         if not data["weapons"]:
             table += "No kills recorded.\n"
 
-        embed = discord.Embed(
+        embed = make_embed(section="CS 1.6",
             title=f"🔫 {data['Name']} — {label} Weapon Breakdown",
             description=f"```\n{table}```",
             color=ARABIAN_COLOR,
@@ -457,7 +442,7 @@ class CsLogic(commands.Cog):
 
         # Highlight who leads on XP in the title.
         leader = data_one if data_one["XP"] >= data_two["XP"] else data_two
-        embed = discord.Embed(
+        embed = make_embed(section="CS 1.6",
             title=f"⚔️ {data_one['Name']}  vs  {data_two['Name']}  ·  {label}",
             description=f"👑 Higher XP: **{leader['Name']}**",
             color=discord.Color.purple(),
@@ -498,7 +483,7 @@ class CsLogic(commands.Cog):
         for i, r in enumerate(rows, start=1):
             table += "{:<4}{:<9}{}\n".format(i, r["kills"], _short_name(r["Nick"]))
 
-        embed = discord.Embed(
+        embed = make_embed(section="CS 1.6",
             title=f"🔝 Top {column} Killers · {label}",
             description=f"```\n{table}```",
             color=ARABIAN_COLOR,
@@ -540,11 +525,13 @@ class CsLogic(commands.Cog):
         deaths = s["deaths"] or 0
         kd = round(kills / deaths, 2) if deaths else float(kills)
 
-        embed = discord.Embed(title=f"📊 Arabian Servers — {label} Global Stats", color=discord.Color.gold())
-        embed.set_thumbnail(url=ARABIAN_ICON)
+        embed = make_embed(section="CS 1.6", title=f"📊 Arabian Servers — {label} Global Stats", color=discord.Color.gold())
+        if interaction.guild and interaction.guild.icon:
+            embed.set_thumbnail(url=interaction.guild.icon.url)
 
         embed.add_field(name="👥 Registered Players", value=f"{s['total_players']:,}", inline=True)
         embed.add_field(name="⏱️ Combined Playtime", value=format_played_time(s["playtime"]), inline=True)
+        embed.add_field(name="Dataset", value=label, inline=True)
 
         embed.add_field(name="💀 Total Kills", value=f"{kills:,}", inline=True)
         embed.add_field(name="☠️ Total Deaths", value=f"{deaths:,}", inline=True)

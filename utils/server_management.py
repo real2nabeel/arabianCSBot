@@ -1,6 +1,38 @@
 """Shared guards for server management."""
 import re
 
+import discord
+
+
+def log_code_block(content):
+    """Keep user text inside a closed code fence and Discord's field limit."""
+    text = (content or "(No text content)").replace("`", "`\u200b")
+    if len(text) > 1000:
+        text = text[:985] + "\n… (truncated)"
+    return f"```\n{text}\n```"
+
+
+def message_log_embed(guild_id, channel_id, message_id, *, author=None,
+                      author_id=None, deleted=False):
+    """Compact message event card; deleted messages link to their channel."""
+    author_id = author.id if author is not None else author_id
+    channel_url = f"https://discord.com/channels/{guild_id}/{channel_id}"
+    link = channel_url if deleted else f"{channel_url}/{message_id}"
+    label = "Open channel" if deleted else "Jump to message"
+    embed = discord.Embed(
+        title="🗑️ Message deleted" if deleted else "✏️ Message edited",
+        description=f"[↗ {label}]({link})",
+        colour=discord.Colour.red() if deleted else discord.Colour.gold(),
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.add_field(name="Author", value=f"<@{author_id}>" if author_id else "Unknown · not cached", inline=True)
+    embed.add_field(name="Channel", value=f"<#{channel_id}>", inline=True)
+    avatar = getattr(author, "display_avatar", None)
+    if avatar is not None:
+        embed.set_thumbnail(url=str(avatar.url))
+    embed.set_footer(text="Server logs • Deleted" if deleted else "Server logs • Edited")
+    return embed
+
 
 def safe_auto_role(role, me):
     if role.is_default() or role.managed or role >= me.top_role:

@@ -20,13 +20,14 @@ from utils.constants import (
     VOICE_XP_PER_TICK, VOICE_TICK_SECONDS, VOICE_MIN_HUMANS,
     XP_EXCLUDED_CHANNELS, LEVELUP_CHANNEL_ID, LOGGING_CHANNEL_ID,
 )
+from utils.embeds import make_embed, BRAND_COLOR
 from utils.database import format_played_time
 from utils.leveling import (
     level_progress, level_from_xp, progress_bar, is_max_level, DEFAULT_RANK_NAMES,
 )
 
 XP_PAGE_SIZE = 15
-ARABIAN_COLOR = discord.Color.from_rgb(230, 145, 30)
+ARABIAN_COLOR = BRAND_COLOR
 
 
 def _short_name(name, limit=16):
@@ -214,7 +215,9 @@ class Leveling(commands.Cog):
         desc = f"🎉 {member.mention} just reached **Level {new_level}**!"
         if role is not None:
             desc += f"\nUnlocked the {role.mention} role."
-        embed = discord.Embed(description=desc, color=ARABIAN_COLOR)
+        embed = make_embed(section="Discord activity", title="🎉 Level up!", description=desc, color=ARABIAN_COLOR)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text="Keep chatting and joining voice to earn XP")
         try:
             await channel.send(embed=embed)
         except discord.HTTPException:
@@ -257,8 +260,9 @@ class Leveling(commands.Cog):
         total = await self.db.get_xp_total_members(interaction.guild.id)
         rank_role = await self._current_rank_role(interaction.guild, lvl)
 
-        embed = discord.Embed(
-            title=f"📈 {member.display_name} — Level {lvl}",
+        embed = make_embed(section="Discord activity",
+            title=f"📈 {member.display_name}",
+            description=f"{member.mention} · **Level {lvl}**",
             color=rank_role.color if rank_role else ARABIAN_COLOR,
         )
         if member.display_avatar:
@@ -274,7 +278,7 @@ class Leveling(commands.Cog):
             bar = progress_bar(into_level, needed)
             embed.add_field(
                 name=f"Progress to Level {lvl + 1}",
-                value=f"`{bar}`\n{into_level:,} / {needed:,} XP",
+                value=f"`{bar}`\n**{into_level:,} / {needed:,} XP** · {needed - into_level:,} XP to go",
                 inline=False,
             )
         embed.add_field(name="💬 Messages", value=f"{row['messages']:,}", inline=True)
@@ -300,7 +304,7 @@ class Leveling(commands.Cog):
         rows, total = await self.db.get_top_xp(guild.id, page)
         offset = (max(1, page) - 1) * XP_PAGE_SIZE
         max_page = max(1, -(-total // XP_PAGE_SIZE))
-        embed = discord.Embed(
+        embed = make_embed(section="Discord activity",
             title="🏆 Discord Activity Leaderboard",
             description=self._xptop_table(guild, rows, offset),
             color=ARABIAN_COLOR,
@@ -389,7 +393,7 @@ class Leveling(commands.Cog):
             if role >= guild.me.top_role:
                 too_high.append(role.mention)
 
-        embed = discord.Embed(
+        embed = make_embed(section="Discord activity",
             title="📥 Level Role Import",
             color=ARABIAN_COLOR,
             description=(
@@ -401,11 +405,11 @@ class Leveling(commands.Cog):
             embed.add_field(name="✅ Mapped", value="\n".join(mapped), inline=False)
         if missing:
             embed.add_field(
-                name="❌ No matching role (create them, then re-run)",
+                name="Missing roles — create and retry",
                 value="\n".join(missing), inline=False)
         if too_high:
             embed.add_field(
-                name="⚠️ Above my top role — I can't assign these",
+                name="⚠️ Role hierarchy needs attention",
                 value="Move my role above them in Server Settings → Roles:\n"
                       + ", ".join(too_high),
                 inline=False)
@@ -425,7 +429,7 @@ class Leveling(commands.Cog):
             role = interaction.guild.get_role(t["role_id"])
             label = role.mention if role else f"⚠️ deleted role ({t['role_id']})"
             lines.append(f"**Level {t['level']}** → {label}")
-        embed = discord.Embed(
+        embed = make_embed(section="Discord activity",
             title="🎚️ Level Roles",
             description="\n".join(lines),
             color=ARABIAN_COLOR,
@@ -492,7 +496,7 @@ class Leveling(commands.Cog):
                 i, f"{r['xp']:,}", r["messages"], f"{voice_min}m",
                 _short_name(self._member_name(interaction.guild, r["user_id"]), 14),
             )
-        embed = discord.Embed(
+        embed = make_embed(section="Discord activity",
             title="🔍 XP Audit",
             description=f"```\n{table}```",
             color=discord.Color.red(),
