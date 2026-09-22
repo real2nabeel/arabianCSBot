@@ -209,6 +209,49 @@ class Database:
             **self.config,
         )
 
+    async def ensure_server_monitor_schema(self):
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS server_monitor ("
+            "guild_id BIGINT UNSIGNED NOT NULL, server_key VARCHAR(255) NOT NULL, "
+            "dashboard_id BIGINT UNSIGNED NULL, panel_id BIGINT UNSIGNED NULL, "
+            "armed BOOLEAN NOT NULL DEFAULT 1, last_alert DOUBLE NOT NULL DEFAULT 0, "
+            "PRIMARY KEY (guild_id, server_key)) CHARACTER SET utf8mb4"
+        )
+
+    async def get_server_monitor(self, guild_id, server_key):
+        await self.execute(
+            "INSERT IGNORE INTO server_monitor (guild_id, server_key) VALUES (%s, %s)",
+            (guild_id, server_key),
+        )
+        return await self.fetch_one(
+            "SELECT * FROM server_monitor WHERE guild_id=%s AND server_key=%s",
+            (guild_id, server_key),
+        )
+
+    async def set_monitor_message(self, guild_id, server_key, field, message_id):
+        if field not in {"dashboard_id", "panel_id"}:
+            raise ValueError("Invalid monitor message field")
+        await self.execute(
+            f"UPDATE server_monitor SET {field}=%s WHERE guild_id=%s AND server_key=%s",
+            (message_id, guild_id, server_key),
+        )
+
+    async def rearm_server_alert(self, guild_id, server_key):
+        await self.execute(
+            "UPDATE server_monitor SET armed=1 WHERE guild_id=%s AND server_key=%s",
+            (guild_id, server_key),
+        )
+
+    async def claim_server_alert(self, guild_id, server_key, now, cooldown):
+        # Reserve before sending so a restart/uncertain Discord response cannot
+        # produce a second ping. A failed send may consume this alert cycle.
+        return await self.execute(
+            "UPDATE server_monitor SET armed=0, last_alert=%s "
+            "WHERE guild_id=%s AND server_key=%s AND armed=1 "
+            "AND (last_alert=0 OR last_alert<=%s)",
+            (now, guild_id, server_key, now - cooldown),
+        ) == 1
+
     async def close(self):
         if self.pool is not None:
             self.pool.close()

@@ -169,6 +169,62 @@ All settings are provided through environment variables (see `.env.example`):
 
 ## Server management
 
+### Live dashboard and activity alerts
+
+Set `DASHBOARD_CHANNEL_ID` to a text channel for the live server card. The bot
+creates one message, stores its ID in the bot database, and updates it every
+60 seconds. It displays map, total players/capacity, address, and a console
+connect command. Failed queries show an unreachable state with no stale map or
+player count. If the message is deleted, it creates a replacement. The bot pins
+the card when it has Manage Messages; otherwise staff can pin it manually.
+
+For opt-in notifications, create an ordinary **Server Alerts** role below the
+bot's highest role. Set `ACTIVITY_ALERT_ROLE_ID` and `ACTIVITY_ALERT_CHANNEL_ID`.
+The bot creates an Enable alerts / Disable alerts panel in that channel. Buttons
+keep working after restarts. The role must not have staff permissions and must
+not be listed in `AUTO_ROLE_IDS`. Members still undergoing membership screening
+cannot opt in until screening is complete.
+
+The default alert conditions are:
+
+- At least **15 reported humans** for **120 seconds** before an alert.
+- After alerting, fewer than **4 humans** for **300 seconds** to re-arm.
+- At least **7,200 seconds (2 hours)** between alerts.
+- Bot counts are subtracted from the total reported by A2S_INFO. Missing or
+  inconsistent counts are unknown and cannot qualify or re-arm an alert.
+- Polls occur every **30 seconds**. Failed queries and long sampling gaps reset
+  the continuous-condition timers. Conditions are checked at sample times.
+
+The dashboard uses total occupancy, while alerts use humans only. These are
+server-reported counts; plugins that spoof population can make them inaccurate.
+No rules query or extra game plugin is needed.
+
+Armed/disarmed state and the last alert time are persisted in `server_monitor`,
+keyed by Discord guild and game-server address. On restart, the two-minute and
+five-minute observation windows start fresh so downtime never counts as proof
+of sustained population. The bot reserves an alert in the database before
+sending it to avoid duplicate pings on restart. If sending fails or the process
+crashes at that point, that cycle may be skipped and the cooldown still applies.
+Run one bot instance. A crash between creating a dashboard/panel message and
+saving its ID can leave an orphan message that staff should remove manually.
+
+The bot needs View Channel, Send Messages, Embed Links, and Read Message History
+in the configured text channels, plus Manage Roles to manage subscriptions.
+For a non-mentionable alert role, grant **Mention @everyone, @here, and All Roles**
+to the bot in the alert channel only. Each alert explicitly permits mentions of
+only the configured role. Alternatively, a mentionable role works, but other
+members may then be able to ping it too. Dashboard/panel messages never ping.
+
+All thresholds and intervals are configurable in `.env.example`. Blank channel
+IDs disable the corresponding feature. `GUILD_ID` is required and all configured
+channels must belong to that guild. Deploy changes with:
+
+```bash
+docker compose up -d --build --force-recreate bot
+```
+
+### Event logs, welcomes, and automatic roles
+
 The bot also provides server event logs, welcome messages, and automatic member
 roles. Use Discord's built-in tools for moderation. Settings are read from `.env` on startup; copy the
 server-management section from `.env.example` and restart the Python process after editing.
