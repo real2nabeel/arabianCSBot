@@ -36,49 +36,42 @@ def fit_name(draw, name, face, width):
 
 
 def render_leaderboard(players, updated_at):
-    """Bounded 1800px graphic; caller runs this CPU work outside the event loop."""
+    """Wide 1800x1050 graphic; caller runs this CPU work outside the event loop."""
     players = players[:50]
-    image = Image.new("RGB", (1800, 1700), BACKGROUND)
+    image = Image.new("RGB", (1800, 1050), BACKGROUND)
     draw = ImageDraw.Draw(image)
-    small, body, bold = font(23), font(26), font(28, True)
+    small, body, bold = font(24), font(30), font(30, True)
     draw.rectangle((0, 0, 1800, 8), fill=GOLD)
-    draw.text((60, 43), "ARABIAN SERVERS", font=font(25, True), fill=GOLD)
-    draw.text((60, 89), "DD2 · TOP 50", font=font(65, True), fill=TEXT)
-    draw.text((1740, 121), "SEASON LEADERBOARD", font=font(25), fill=MUTED, anchor="ra")
-
-    accents = (GOLD, "#c4d4ea", "#cf986c")
-    for index, player in enumerate(players[:3]):
-        x = 60 + index * 570
-        draw.rounded_rectangle((x, 203, x + 540, 352), radius=14, fill=SURFACE)
-        draw.rectangle((x + 20, 225, x + 24, 325), fill=accents[index])
-        draw.text((x + 43, 223), f"#{index + 1}", font=font(28, True), fill=accents[index])
-        name = fit_name(draw, player["Name"], font(35, True), 445)
-        draw.text((x + 43, 265), name, font=font(35, True), fill=TEXT)
-        draw.text((x + 43, 313), f"{player['Kills']:,} kills", font=small, fill=MUTED)
+    draw.text((50, 32), "DD2 · TOP 50", font=font(48, True), fill=TEXT)
+    draw.text((1750, 49), "SEASON LEADERBOARD", font=small, fill=MUTED, anchor="ra")
 
     for column in range(2):
-        x = 60 + column * 870
+        x = 50 + column * 880
         # Names last so Arabic names cannot reorder adjacent numeric columns.
         for right, label in ((42, "#"), (178, "KILLS"), (310, "DEATHS"), (424, "HS")):
-            draw.text((x + right, 392), label, font=small, fill=MUTED, anchor="ra")
-        draw.text((x + 452, 392), "PLAYER", font=small, fill=MUTED)
+            draw.text((x + right, 110), label, font=small, fill=MUTED, anchor="ra")
+        draw.text((x + 452, 110), "PLAYER", font=small, fill=MUTED)
         for index, player in enumerate(players[column * 25:(column + 1) * 25]):
-            y = 438 + index * 46
+            y = 152 + index * 33
             if index % 2 == 0:
-                draw.rounded_rectangle((x - 10, y - 4, x + 820, y + 38), radius=5, fill=SURFACE)
+                draw.rounded_rectangle((x - 10, y - 2, x + 820, y + 30), radius=4, fill=SURFACE)
             draw.text((x + 42, y), str(player["Rank"]), font=bold,
-                      fill=GOLD if player["Rank"] <= 3 else MUTED, anchor="ra")
+                      fill=GOLD if player["Rank"] <= 3 else MUTED, anchor="rt")
             for right, key in ((178, "Kills"), (310, "Deaths"), (424, "Headshots")):
                 value = f"{player[key]:,}"
-                face = body if len(value) <= 7 else font(19)
-                draw.text((x + right, y + 2), value, font=face, fill=TEXT, anchor="ra")
-            draw.text((x + 452, y + 2), fit_name(draw, player["Name"], body, 350), font=body, fill=TEXT)
+                face = body
+                size = 30
+                while draw.textlength(value, font=face) > 104 and size > 12:
+                    size -= 1
+                    face = font(size)
+                draw.text((x + right, y), value, font=face, fill=TEXT, anchor="rt")
+            draw.text((x + 452, y), fit_name(draw, player["Name"], body, 360), font=body, fill=TEXT, anchor="lt")
     if not players:
-        draw.text((900, 750), "A new season awaits.", font=font(45, True), fill=TEXT, anchor="mm")
-        draw.text((900, 815), "Join the server and claim your place.", font=font(30), fill=MUTED, anchor="mm")
-    draw.line((60, 1623, 1740, 1623), fill="#323b4e", width=2)
-    draw.text((60, 1647), "arabian-servers.com", font=small, fill=GOLD)
-    draw.text((1740, 1647), f"Updated {updated_at:%d %b %Y · %H:%M} UTC",
+        draw.text((900, 485), "A new season awaits.", font=font(45, True), fill=TEXT, anchor="mm")
+        draw.text((900, 550), "Join the server and claim your place.", font=font(30), fill=MUTED, anchor="mm")
+    draw.line((50, 990, 1750, 990), fill="#323b4e", width=2)
+    draw.text((50, 1008), "arabian-servers.com", font=small, fill=GOLD)
+    draw.text((1750, 1008), f"Updated {updated_at:%d %b %Y · %H:%M} UTC",
               font=small, fill=MUTED, anchor="ra")
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)

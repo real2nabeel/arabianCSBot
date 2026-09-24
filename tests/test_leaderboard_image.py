@@ -20,14 +20,14 @@ class ImageTests(TestCase):
             data = render_leaderboard(players, datetime.now(timezone.utc))
             self.assertLess(len(data), 8 * 1024 * 1024)
             image = Image.open(BytesIO(data))
-            self.assertEqual(image.size, (1800, 1700))
+            self.assertEqual(image.size, (1800, 1050))
             image.verify()
 
     def test_long_name_is_fitted_to_its_column(self):
         draw = ImageDraw.Draw(Image.new("RGB", (400, 100)))
-        face = font(26)
-        name = fit_name(draw, "لاعب عربي " * 40, face, 350)
-        self.assertLessEqual(draw.textlength(name, font=face), 350)
+        face = font(30)
+        name = fit_name(draw, "لاعب عربي " * 40, face, 360)
+        self.assertLessEqual(draw.textlength(name, font=face), 360)
         self.assertTrue(name.endswith("…"))
 
     def test_departed_member_keeps_a_named_profile_link(self):
