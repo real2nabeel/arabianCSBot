@@ -1,11 +1,13 @@
 """Population boundary, outage, delivery, and role subscription checks."""
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
 import discord
 from discord.ext import commands
+from discord.http import handle_message_parameters
 
 from utils.server_monitor import ActivityWindow, human_count
 from cogs.server_monitor import ServerMonitor, SERVER_KEY
@@ -151,9 +153,45 @@ class MonitorTests(IsolatedAsyncioTestCase):
         message.edit.assert_awaited_once()
         self.assertEqual(len(message.edit.call_args.kwargs["attachments"]), 1)
         self.assertIsNone(message.edit.call_args.kwargs["embed"])
-        self.assertEqual(message.edit.call_args.kwargs["content"], "**🏆 DD2 · Top 50**")
-        self.assertIsNone(message.edit.call_args.kwargs["view"])
+        self.assertIsNone(message.edit.call_args.kwargs["content"])
+        view = message.edit.call_args.kwargs["view"]
+        self.assertTrue(view.has_components_v2())
+        components = view.to_components()
+        self.assertEqual(components[0]["type"], 17)
+        self.assertEqual(components[0]["components"][0]["items"][0]["media"]["url"],
+                         "attachment://dd2-top-50.png")
         channel.send.assert_not_awaited()
+
+    async def test_leaderboard_creation_and_changed_stats_use_v2_uploads(self):
+        self.db.get_leaderboard_message = AsyncMock(return_value=None)
+        self.db.set_leaderboard_message = AsyncMock()
+        players = [{"Rank": 1, "Name": "Falcon", "Kills": 100, "Deaths": 10, "Headshots": 40}]
+        self.bot.db_live = SimpleNamespace(get_top_players=AsyncMock(
+            side_effect=[(players, 1), ([dict(players[0], Kills=101)], 1)]))
+        payloads = []
+
+        async def upload(**kwargs):
+            # Exercise the upgraded library's actual multipart serializer.
+            with handle_message_parameters(**kwargs) as params:
+                payloads.append(json.loads(params.multipart[0]["value"]))
+            return message
+
+        message = SimpleNamespace(id=77, author=self.bot.user, edit=AsyncMock(side_effect=upload))
+        channel = SimpleNamespace(fetch_message=AsyncMock(return_value=message),
+                                  send=AsyncMock(side_effect=upload))
+        self.cog.channel = Mock(return_value=channel)
+        with patch("cogs.server_monitor.render_leaderboard", return_value=b"png"):
+            await self.cog.update_leaderboard()
+            await self.cog.update_leaderboard()
+        channel.send.assert_awaited_once()
+        message.edit.assert_awaited_once()
+        self.assertEqual(payloads[1]["embeds"], [])
+        for payload in payloads:
+            self.assertTrue(payload["flags"] & (1 << 15))
+            self.assertIsNone(payload.get("content"))
+            self.assertEqual(len(payload["attachments"]), 1)
+            self.assertEqual(payload["attachments"][0]["filename"], "dd2-top-50.png")
+            self.assertEqual(payload["components"][0]["components"][0]["type"], 12)
 
     def test_offline_card_does_not_show_stale_map_or_count(self):
         self.cog.last_success = 10000

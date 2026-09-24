@@ -1,4 +1,4 @@
-discord.py==2.4.0
+discord.py==2.7.1
 python-a2s~=1.4.1
 aiomysql~=0.3.2
 python-dotenv~=1.2.2

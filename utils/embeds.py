@@ -11,7 +11,6 @@ def make_embed(*, section="Community", **kwargs):
         kwargs["title"] = kwargs["title"][:256]
     embed = discord.Embed(**kwargs)
     embed.set_author(name=f"Arabian Servers • {section}")
-    embed.set_footer(text="Arabian Servers • CS 1.6 community")
     return embed
 
 

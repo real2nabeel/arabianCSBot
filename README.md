@@ -186,7 +186,7 @@ channels and clears the panel ID. If that panel lives in a previous channel,
 staff must remove it manually. Keep the role out of `AUTO_ROLE_IDS`.
 
 A second message in `DASHBOARD_CHANNEL_ID` shows the season's top 50 as one
-direct image attachment beneath a short title, without an embed: two columns
+Components V2 media card, with the title and timestamp only in the image: two columns
 of 25, with the top three highlighted. There are no buttons
 or pages. Members can open the image to enlarge it. Rankings come from the live
 ranking database, following the existing ranking order. Every
