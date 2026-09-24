@@ -4,6 +4,14 @@ import re
 import discord
 
 
+def member_profile(user):
+    """Named profile link remains readable even after a member leaves the guild."""
+    name = getattr(user, "display_name", None) or getattr(user, "name", None) or "Member"
+    name = discord.utils.escape_markdown(str(name).replace("\n", " "))
+    name = name.replace("[", "\\[").replace("]", "\\]")
+    return f"[{name}](https://discord.com/users/{user.id})"
+
+
 def log_code_block(content):
     """Keep user text inside a closed code fence and Discord's field limit."""
     text = (content or "(No text content)").replace("`", "`\u200b")

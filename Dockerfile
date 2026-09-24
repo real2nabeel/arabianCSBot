@@ -6,8 +6,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Dependencies are pure Python (discord.py, aiomysql, python-a2s), so no
-# compiler/toolchain is needed. Copied first so the layer caches across edits.
+# Fonts for server-generated leaderboard graphics (including Arabic names).
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pillow provides prebuilt wheels; no compiler/toolchain is needed.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

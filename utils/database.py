@@ -228,6 +228,27 @@ class Database:
             (guild_id, server_key),
         )
 
+    async def ensure_leaderboard_schema(self):
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS server_leaderboard ("
+            "guild_id BIGINT UNSIGNED NOT NULL, server_key VARCHAR(255) NOT NULL, "
+            "message_id BIGINT UNSIGNED NULL, "
+            "PRIMARY KEY (guild_id, server_key)) CHARACTER SET utf8mb4"
+        )
+
+    async def get_leaderboard_message(self, guild_id, server_key):
+        return await self.fetch_one(
+            "SELECT message_id FROM server_leaderboard WHERE guild_id=%s AND server_key=%s",
+            (guild_id, server_key),
+        )
+
+    async def set_leaderboard_message(self, guild_id, server_key, message_id):
+        await self.execute(
+            "INSERT INTO server_leaderboard (guild_id, server_key, message_id) VALUES (%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE message_id=VALUES(message_id)",
+            (guild_id, server_key, message_id),
+        )
+
     async def set_monitor_message(self, guild_id, server_key, field, message_id):
         if field not in {"dashboard_id", "panel_id"}:
             raise ValueError("Invalid monitor message field")

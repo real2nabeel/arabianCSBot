@@ -173,17 +173,33 @@ All settings are provided through environment variables (see `.env.example`):
 
 Set `DASHBOARD_CHANNEL_ID` to a text channel for the live server card. The bot
 creates one message, stores its ID in the bot database, and updates it every
-60 seconds. It displays map, total players/capacity, address, and a console
-connect command. Failed queries show an unreachable state with no stale map or
+60 seconds. It displays the DD2 server's map, total players/capacity, a console
+connect command, and the community website. Failed queries show an unreachable state with no stale map or
 player count. If the message is deleted, it creates a replacement. The bot pins
 the card when it has Manage Messages; otherwise staff can pin it manually.
 
-For opt-in notifications, create an ordinary **Server Alerts** role below the
-bot's highest role. Set `ACTIVITY_ALERT_ROLE_ID` and `ACTIVITY_ALERT_CHANNEL_ID`.
-The bot creates an Enable alerts / Disable alerts panel in that channel. Buttons
-keep working after restarts. The role must not have staff permissions and must
-not be listed in `AUTO_ROLE_IDS`. Members still undergoing membership screening
-cannot opt in until screening is complete.
+Members opt into the alert role through Discord's Channels & Roles menu. Set
+`ACTIVITY_ALERT_ROLE_ID` and `ACTIVITY_ALERT_CHANNEL_ID` as before. The bot no
+longer assigns subscription roles or posts buttons. On upgrade it deletes its
+saved old subscription panel from the currently configured alert/dashboard
+channels and clears the panel ID. If that panel lives in a previous channel,
+staff must remove it manually. Keep the role out of `AUTO_ROLE_IDS`.
+
+A second message in `DASHBOARD_CHANNEL_ID` shows the season's top 50 as one
+graphic: two columns of 25, with the top three highlighted. There are no buttons
+or pages. Members can open the image to enlarge it. Rankings come from the live
+ranking database, following the existing ranking order. Every
+`LEADERBOARD_REFRESH_SECONDS` (default 300), the bot checks the data and replaces
+the attachment on that same message only when the displayed standings change.
+It recovers the message ID after restarts and replaces a deleted message.
+The timestamp records when the displayed standings were last rendered.
+
+The bot creates a small `server_leaderboard` table automatically in `DB_NAME_BOT`
+to save that message ID; it does not store ranking snapshots. Rendering runs in
+a worker thread. Query/render/upload failures preserve the previous board and
+are retried at the next interval. Docker installs Pillow, Arabic text shaping
+dependencies, and DejaVu fonts; local Windows runs use Arial. The dashboard
+channel additionally needs **Attach Files**. Existing `/top` pagination is unchanged.
 
 The default alert conditions are:
 
@@ -205,15 +221,16 @@ five-minute observation windows start fresh so downtime never counts as proof
 of sustained population. The bot reserves an alert in the database before
 sending it to avoid duplicate pings on restart. If sending fails or the process
 crashes at that point, that cycle may be skipped and the cooldown still applies.
-Run one bot instance. A crash between creating a dashboard/panel message and
+Run one bot instance. A crash between creating a dashboard/leaderboard message and
 saving its ID can leave an orphan message that staff should remove manually.
 
 The bot needs View Channel, Send Messages, Embed Links, and Read Message History
-in the configured text channels, plus Manage Roles to manage subscriptions.
+in the configured text channels. Manage Roles is no longer needed for activity
+alerts (it is still needed for automatic member/level roles).
 For a non-mentionable alert role, grant **Mention @everyone, @here, and All Roles**
 to the bot in the alert channel only. Each alert explicitly permits mentions of
 only the configured role. Alternatively, a mentionable role works, but other
-members may then be able to ping it too. Dashboard/panel messages never ping.
+members may then be able to ping it too. Dashboard/leaderboard messages never ping.
 
 All thresholds and intervals are configurable in `.env.example`. Blank channel
 IDs disable the corresponding feature. `GUILD_ID` is required and all configured
@@ -244,7 +261,8 @@ No ProBot settings, messages, or XP are imported automatically.
 
 Server logs cover joins/leaves, nickname/member-role/timeout changes,
 message edits/deletions/bulk deletions, bans/unbans, and channel/role creation,
-updates, and deletion. Log messages never ping members or roles. Both configured
+updates, and deletion. Role-position-only changes are ignored. Member event logs
+use named profile links so departed members remain readable. Log messages never ping members or roles. Both configured
 log channels are excluded from message logging. Content of uncached deleted
 messages, and the previous content of uncached edited messages, is unavailable;
 the bot records the event IDs instead. Bulk deletions produce a count/ID summary.

@@ -1,4 +1,5 @@
 """Population boundary, outage, delivery, and role subscription checks."""
+import asyncio
 from types import SimpleNamespace
 from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
@@ -7,7 +8,7 @@ import discord
 from discord.ext import commands
 
 from utils.server_monitor import ActivityWindow, human_count
-from cogs.server_monitor import ServerMonitor, AlertRoles, SERVER_KEY
+from cogs.server_monitor import ServerMonitor, SERVER_KEY
 
 
 class PopulationTests(TestCase):
@@ -77,14 +78,14 @@ class MonitorTests(IsolatedAsyncioTestCase):
         self.cog = ServerMonitor(self.bot)
 
     async def test_claim_precedes_targeted_ping(self):
-        role = SimpleNamespace(id=55, mention="<@&55>", mentionable=False)
+        role = SimpleNamespace(id=55, mention="<@&55>", mentionable=False, is_default=lambda: False)
         guild = SimpleNamespace(me=Mock(), get_role=Mock(return_value=role))
         channel = SimpleNamespace(guild=guild, send=AsyncMock(), permissions_for=Mock(
             return_value=discord.Permissions.all()))
         self.cog.channel = Mock(return_value=channel)
         self.cog.window.observe = Mock(return_value="alert")
         info = SimpleNamespace(map_name="de_dust2", player_count=22, max_players=32)
-        with patch("cogs.server_monitor.safe_auto_role", return_value=True):
+        with patch("cogs.server_monitor.GUILD_ID", 100):
             await self.cog.activity({"armed": 1, "last_alert": 0}, info, 15, 120)
             kwargs = channel.send.call_args.kwargs
             self.assertEqual(kwargs["content"], "<@&55>")
@@ -97,7 +98,7 @@ class MonitorTests(IsolatedAsyncioTestCase):
 
     async def test_enabled_extension_starts_and_unloads_without_network(self):
         async with commands.Bot(command_prefix="!", intents=discord.Intents.none()) as bot:
-            bot.db_bot = SimpleNamespace(ensure_server_monitor_schema=AsyncMock())
+            bot.db_bot = SimpleNamespace(ensure_server_monitor_schema=AsyncMock(), ensure_leaderboard_schema=AsyncMock())
             with patch("cogs.server_monitor.GUILD_ID", 100), \
                  patch("cogs.server_monitor.DASHBOARD_CHANNEL_ID", 99), \
                  patch("cogs.server_monitor.ACTIVITY_ALERT_CHANNEL_ID", 0):
@@ -105,9 +106,10 @@ class MonitorTests(IsolatedAsyncioTestCase):
                 await bot.add_cog(cog)
                 bot.db_bot.ensure_server_monitor_schema.assert_awaited_once()
                 self.assertTrue(cog.poll.is_running())
-                self.assertTrue(cog.view.is_persistent())
+                self.assertFalse(hasattr(cog, "view"))
                 await bot.remove_cog("ServerMonitor")
-                self.assertTrue(cog.view.is_finished())
+                await asyncio.sleep(0)
+                self.assertTrue(cog.poll.get_task().cancelled())
 
     async def test_existing_dashboard_is_edited_not_reposted(self):
         message = SimpleNamespace(id=77, author=self.bot.user, pinned=True, edit=AsyncMock())
@@ -126,23 +128,30 @@ class MonitorTests(IsolatedAsyncioTestCase):
         await self.cog.update_message({"dashboard_id": 77}, "dashboard_id", 99, self.cog.dashboard_embed(None))
         self.assertEqual(self.db.set_monitor_message.call_args.args[1:], (SERVER_KEY, "dashboard_id", 78))
 
-    async def test_role_buttons_use_configured_role_and_screening_guard(self):
-        role = SimpleNamespace(id=55)
-        member = SimpleNamespace(pending=False, add_roles=AsyncMock(), remove_roles=AsyncMock())
-        interaction = SimpleNamespace(guild=SimpleNamespace(id=100, me=Mock(), get_role=Mock(return_value=role)),
-                                      user=member, response=SimpleNamespace(defer=AsyncMock()),
-                                      followup=SimpleNamespace(send=AsyncMock()))
-        view = AlertRoles()
-        self.assertTrue(view.is_persistent())
-        with patch("cogs.server_monitor.GUILD_ID", 100), patch("cogs.server_monitor.safe_auto_role", return_value=True):
-            await view.change_role(interaction, True)
-            member.add_roles.assert_awaited_once_with(role, reason="Opted into server activity alerts")
-            await view.change_role(interaction, False)
-            member.remove_roles.assert_awaited_once()
-            member.add_roles.reset_mock()
-            member.pending = True
-            await view.change_role(interaction, True)
-            member.add_roles.assert_not_awaited()
+    async def test_old_panel_deleted_and_cleared(self):
+        message = SimpleNamespace(author=self.bot.user, delete=AsyncMock())
+        self.cog.channel = Mock(return_value=SimpleNamespace(fetch_message=AsyncMock(return_value=message)))
+        with patch("cogs.server_monitor.ACTIVITY_ALERT_CHANNEL_ID", 99):
+            await self.cog.remove_old_panel({"panel_id": 77})
+        message.delete.assert_awaited_once()
+        self.assertEqual(self.db.set_monitor_message.call_args.args[-2:], ("panel_id", None))
+
+    async def test_leaderboard_replaces_attachment_then_skips_unchanged_data(self):
+        self.db.get_leaderboard_message = AsyncMock(return_value={"message_id": 77})
+        self.db.set_leaderboard_message = AsyncMock()
+        players = [{"Rank": 1, "Name": "Falcon", "Kills": 100, "Deaths": 10, "Headshots": 40}]
+        self.bot.db_live = SimpleNamespace(get_top_players=AsyncMock(return_value=(players, 1)))
+        message = SimpleNamespace(id=77, author=self.bot.user, edit=AsyncMock())
+        channel = SimpleNamespace(fetch_message=AsyncMock(return_value=message), send=AsyncMock())
+        self.cog.channel = Mock(return_value=channel)
+        with patch("cogs.server_monitor.render_leaderboard", return_value=b"png") as render:
+            await self.cog.update_leaderboard()
+            await self.cog.update_leaderboard()
+            render.assert_called_once()
+        message.edit.assert_awaited_once()
+        self.assertEqual(len(message.edit.call_args.kwargs["attachments"]), 1)
+        self.assertIsNone(message.edit.call_args.kwargs["view"])
+        channel.send.assert_not_awaited()
 
     def test_offline_card_does_not_show_stale_map_or_count(self):
         self.cog.last_success = 10000

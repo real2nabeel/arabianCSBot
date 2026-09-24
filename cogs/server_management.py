@@ -8,7 +8,7 @@ from utils.constants import (
     GUILD_ID, SERVER_LOG_CHANNEL_ID, MOD_LOG_CHANNEL_ID, LOG_EXCLUDED_CHANNELS,
     WELCOME_CHANNEL_ID, WELCOME_MESSAGE, AUTO_ROLE_IDS,
 )
-from utils.server_management import safe_auto_role, welcome_text, message_log_embed, log_code_block
+from utils.server_management import safe_auto_role, welcome_text, message_log_embed, log_code_block, member_profile
 
 from utils.embeds import event_embed, permission_changes
 
@@ -62,14 +62,14 @@ class ServerManagement(commands.Cog):
             except discord.HTTPException:
                 logger.exception("Failed automatic role %s for member %s", role_id, member.id)
                 await self.send_log(member.guild, "Automatic role failed",
-                                    f"{member.mention}\nRole: <@&{role_id}>\nAction needed: Check Manage Roles and role hierarchy.")
+                                    f"{member_profile(member)}\nRole: <@&{role_id}>\nAction needed: Check Manage Roles and role hierarchy.")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
         if not self.enabled_guild(member.guild):
             return
         await self.send_log(member.guild, "Member joined",
-                            f"{member.mention}\nAccount created: {member.created_at:%Y-%m-%d %H:%M UTC}")
+                            f"{member_profile(member)}\nAccount created: {member.created_at:%Y-%m-%d %H:%M UTC}")
         await self.apply_auto_roles(member)
         if member.bot or not WELCOME_CHANNEL_ID:
             return
@@ -89,7 +89,7 @@ class ServerManagement(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member):
-        await self.send_log(member.guild, "Member left", f"{member.mention}")
+        await self.send_log(member.guild, "Member left", f"{member_profile(member)}")
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
@@ -109,15 +109,15 @@ class ServerManagement(commands.Cog):
         if before.timed_out_until != after.timed_out_until:
             changes.append(f"Timeout: {after.timed_out_until or 'removed'}")
         if changes:
-            await self.send_log(after.guild, "Member updated", f"{after.mention}\n" + "\n".join(changes))
+            await self.send_log(after.guild, "Member updated", f"{member_profile(after)}\n" + "\n".join(changes))
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild, user):
-        await self.send_log(guild, "Member banned", f"{user.mention}", moderation=True)
+        await self.send_log(guild, "Member banned", f"{member_profile(user)}", moderation=True)
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild, user):
-        await self.send_log(guild, "Member unbanned", f"{user.mention}", moderation=True)
+        await self.send_log(guild, "Member unbanned", f"{member_profile(user)}", moderation=True)
 
     @commands.Cog.listener()
     async def on_raw_message_delete(self, payload):
@@ -210,7 +210,7 @@ class ServerManagement(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_role_update(self, before, after):
         changes = []
-        for attr in ("name", "colour", "hoist", "mentionable", "position"):
+        for attr in ("name", "colour", "hoist", "mentionable"):
             if getattr(before, attr) != getattr(after, attr):
                 changes.append(f"{attr.title()}: {getattr(before, attr)} → {getattr(after, attr)}")
         if before.permissions != after.permissions:
