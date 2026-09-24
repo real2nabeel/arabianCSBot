@@ -129,20 +129,17 @@ class ServerMonitor(commands.Cog):
         if message is not None and message.author.id != self.bot.user.id:
             raise ValueError("Stored leaderboard is not owned by this bot")
         if changed or message is None:
-            embed = make_embed(section="Season leaderboard", title="🏆 DD2 · Top 50",
-                               timestamp=updated)
-            embed.set_image(url="attachment://dd2-top-50.png")
-            embed.set_footer(text="Season standings • Updated")
+            content = "**🏆 DD2 · Top 50**"
             file = discord.File(BytesIO(png), filename="dd2-top-50.png",
                                 description="DD2 season top 50: ranks, kills, deaths, headshots and player names.")
             try:
                 if message is None:
-                    message = await channel.send(embed=embed, file=file,
+                    message = await channel.send(content=content, file=file,
                                                  allowed_mentions=discord.AllowedMentions.none())
                     self.message_ids["leaderboard_id"] = message.id
                 else:
-                    # Supplying only the new File removes the previous image.
-                    await message.edit(embed=embed, attachments=[file], view=None,
+                    # Replace the image and remove the legacy embed on restart.
+                    await message.edit(content=content, embed=None, attachments=[file], view=None,
                                        allowed_mentions=discord.AllowedMentions.none())
             finally:
                 file.close()

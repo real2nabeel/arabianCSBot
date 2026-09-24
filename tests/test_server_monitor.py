@@ -150,6 +150,8 @@ class MonitorTests(IsolatedAsyncioTestCase):
             render.assert_called_once()
         message.edit.assert_awaited_once()
         self.assertEqual(len(message.edit.call_args.kwargs["attachments"]), 1)
+        self.assertIsNone(message.edit.call_args.kwargs["embed"])
+        self.assertEqual(message.edit.call_args.kwargs["content"], "**🏆 DD2 · Top 50**")
         self.assertIsNone(message.edit.call_args.kwargs["view"])
         channel.send.assert_not_awaited()
 
