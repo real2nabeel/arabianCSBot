@@ -8,11 +8,41 @@ from unittest.mock import AsyncMock, Mock, patch
 import discord
 from PIL import Image
 
-from cogs.server_monitor import ServerMonitor, SERVER_KEY
+from cogs.server_monitor import ServerMonitor, SERVER_KEY, PERIOD_SELECT_ID
 from utils.activity import (
-    PERIODS, AdminTracker, admin_rows, build_series, day_key, format_admin_table,
-    format_ago, format_hours, render_activity_graph,
+    DAY, PERIODS, PERIOD_OPTIONS, AdminTracker, admin_rows, build_series, day_key, format_admin_table,
+    format_ago, format_hours, local_zone, period_for, render_activity_graph, tick_times,
 )
+
+
+class PeriodTests(TestCase):
+    def test_dropdown_lists_the_eight_spans_in_order(self):
+        self.assertEqual([label for _, label in PERIOD_OPTIONS],
+                         ["24 hours", "7 days", "1 month", "3 months", "6 months", "1 year", "3 years",
+                          "Max (all time)"])
+        self.assertFalse(PERIODS["24h"].hourly)
+        self.assertTrue(all(p.hourly for key, p in PERIODS.items() if key != "24h"))
+        for period in PERIODS.values():
+            self.assertLessEqual(period.seconds // period.bucket, 200)
+
+    def test_max_spans_all_recorded_data_with_a_readable_scale(self):
+        end = 1_900_000_000
+        for days in (0.5, 5, 40, 150, 400, 1500):
+            period = period_for("max", end - days * DAY, end)
+            self.assertGreaterEqual(period.seconds, min(days, 1) * DAY)
+            self.assertLessEqual(period.seconds // period.bucket, 200)
+            self.assertEqual(period.label, "ALL TIME")
+        self.assertFalse(period_for("max", end - 3600, end).hourly)
+        self.assertEqual(period_for("max", None, end).seconds, DAY)
+
+    def test_month_ticks_land_on_the_first_of_each_month(self):
+        zone = local_zone(3)
+        start = datetime(2026, 1, 15, tzinfo=zone).timestamp()
+        end = datetime(2026, 7, 10, tzinfo=zone).timestamp()
+        ticks = [datetime.fromtimestamp(t, zone) for t in tick_times(start, end, PERIODS["6m"], 3)]
+        self.assertEqual([(t.month, t.day, t.hour) for t in ticks], [(m, 1, 0) for m in range(2, 8)])
+        two_monthly = [datetime.fromtimestamp(t, zone).month for t in tick_times(start, end, PERIODS["1y"], 3)]
+        self.assertEqual(two_monthly, [3, 5, 7])
 
 
 class TrackerTests(TestCase):
@@ -127,7 +157,7 @@ class RecordingTests(IsolatedAsyncioTestCase):
         channel = SimpleNamespace(guild=SimpleNamespace(default_role=everyone),
                                   permissions_for=Mock(return_value=discord.Permissions(view_channel=True)))
         self.cog.channel = Mock(return_value=channel)
-        with patch("cogs.server_monitor.ADMIN_ACTIVITY_CHANNEL_ID", 5):
+        with patch("cogs.server_monitor.STAFF_ACTIVITY_CHANNEL_ID", 5):
             with self.assertRaises(ValueError):
                 await self.cog.post_admin_activity()
         channel.permissions_for.assert_called_once_with(everyone)
@@ -148,3 +178,72 @@ class RecordingTests(IsolatedAsyncioTestCase):
         embed = message.edit.call_args.kwargs["embed"]
         self.assertIn("Boss", embed.description)
         self.assertIn("Away", embed.description)
+
+
+class GraphCardTests(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.db_bot = SimpleNamespace(
+            get_first_activity_ts=AsyncMock(return_value=None),
+            get_activity_buckets=AsyncMock(return_value={}), get_hourly_buckets=AsyncMock(return_value={}),
+            get_monitor_message_id=AsyncMock(return_value=None), set_monitor_message_id=AsyncMock(),
+        )
+        self.bot = SimpleNamespace(db_bot=self.db_bot, user=SimpleNamespace(id=88))
+        self.cog = ServerMonitor(self.bot)
+
+    def select_of(self, view):
+        components = view.to_components()
+        row = components[0]["components"][1]
+        return row["components"][0]
+
+    def test_dropdown_marks_the_current_span_and_survives_restarts(self):
+        view, _ = self.cog.graph_view("1y")
+        self.assertTrue(view.is_persistent())
+        select = self.select_of(view)
+        self.assertEqual(select["custom_id"], PERIOD_SELECT_ID)
+        self.assertEqual(len(select["options"]), 8)
+        self.assertEqual([o["value"] for o in select["options"] if o.get("default")], ["1y"])
+
+    async def test_raw_samples_only_for_short_spans(self):
+        await self.cog.activity_png("24h")
+        self.db_bot.get_activity_buckets.assert_awaited_once()
+        self.db_bot.get_hourly_buckets.assert_not_awaited()
+        await self.cog.activity_png("3y")
+        self.db_bot.get_hourly_buckets.assert_awaited_once()
+
+    async def test_choosing_a_span_redraws_the_same_message_and_is_kept(self):
+        interaction = SimpleNamespace(
+            data={"values": ["3m"]},
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+        with patch("cogs.server_monitor.render_activity_graph", return_value=b"png"):
+            await self.cog.on_period_selected(interaction)
+        interaction.response.defer.assert_awaited_once()
+        kwargs = interaction.edit_original_response.call_args.kwargs
+        self.assertEqual(len(kwargs["attachments"]), 1)
+        self.assertEqual([o["value"] for o in self.select_of(kwargs["view"])["options"] if o.get("default")], ["3m"])
+        self.assertEqual(self.cog.graph_period, "3m")
+
+    async def test_unknown_span_is_rejected(self):
+        interaction = SimpleNamespace(data={"values": ["10y"]},
+                                      response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()))
+        await self.cog.on_period_selected(interaction)
+        interaction.response.defer.assert_not_awaited()
+        self.assertEqual(self.cog.graph_period, "24h")
+
+    async def test_graph_goes_to_the_private_staff_channel_only(self):
+        message = SimpleNamespace(id=66, author=self.bot.user)
+        public = SimpleNamespace(guild=SimpleNamespace(default_role=Mock()), send=AsyncMock(return_value=message),
+                                 permissions_for=Mock(return_value=discord.Permissions(view_channel=True)))
+        self.cog.channel = Mock(return_value=public)
+        with patch("cogs.server_monitor.STAFF_ACTIVITY_CHANNEL_ID", 5), \
+             patch("cogs.server_monitor.render_activity_graph", return_value=b"png"):
+            with self.assertRaises(ValueError):
+                await self.cog.post_activity_graph()
+            public.send.assert_not_awaited()
+            public.permissions_for = Mock(return_value=discord.Permissions.none())
+            with patch("cogs.server_monitor.GUILD_ID", 100):
+                await self.cog.post_activity_graph()
+        self.cog.channel.assert_called_with(5)
+        self.assertEqual(len(public.send.call_args.kwargs["files"]), 1)
+        self.db_bot.set_monitor_message_id.assert_awaited_once_with(100, SERVER_KEY, "activity_graph", 66)

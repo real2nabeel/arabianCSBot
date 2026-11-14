@@ -54,7 +54,7 @@ Every ranking command comes in two flavours: the plain command reads the
 | `/topweapon <weapon>` · `/topweapon-history <weapon>` | Top killers with a specific weapon (with autocomplete) |
 | `/serverstats` · `/serverstats-history` | Aggregate metrics across all registered players |
 | `/ip` | Server address and live player count |
-| `/server-activity [period]` | Graph of players on DD2 over the last 24 hours, 7 days or 30 days |
+| `/server-activity [period]` | Staff only (Manage Server): graph of players on DD2, from 24 hours to all time, shown only to you |
 | `/admin-activity` | Staff only (Manage Server): hours each admin spent on DD2, shown only to you |
 
 ## Tech Stack
@@ -245,13 +245,24 @@ docker compose up -d --build --force-recreate bot
 
 ### Server activity graph and admin activity
 
-Every poll also records the number of human players in `server_activity` in
-`DB_NAME_BOT`, with an empty value when the server does not answer.
-Samples older than `ACTIVITY_HISTORY_DAYS` (default 90) are deleted hourly.
-A third message in `DASHBOARD_CHANNEL_ID` shows the last 24 hours as an image
-(average and peak per 15 minutes, outages marked in red), redrawn every
-`ACTIVITY_REFRESH_SECONDS` (default 600). `/server-activity` draws the same
-graph for 24 hours, 7 days (hourly) or 30 days (every 6 hours).
+Both live in one private staff channel, `STAFF_ACTIVITY_CHANNEL_ID`; the bot
+refuses a channel that @everyone can view. Nothing is posted publicly.
+
+Every poll records the number of human players, with an empty value when the
+server does not answer. Raw samples (`server_activity`) feed the 24-hour view
+and are deleted after `ACTIVITY_HISTORY_DAYS` (default 30). Each sample is also
+added to hourly totals (`server_activity_hourly`), which are kept forever and
+feed every longer view.
+
+The graph is one message with a dropdown under it: 24 hours, 7 days, 1 month,
+3 months, 6 months, 1 year, 3 years and Max (all time). Picking a span redraws
+that same message for everyone in the channel, and the
+`ACTIVITY_REFRESH_SECONDS` refresh (default 600) keeps the chosen span until
+the bot restarts, when it returns to 24 hours. The dropdown keeps working after
+restarts. Each point is an average and a peak over 15 minutes (24 hours) up to
+a week (3 years); a span made entirely of failed polls is marked offline.
+Spans that start before recording began say when recording started.
+`/server-activity` draws any span privately for members with Manage Server.
 
 Admins are players in the live rank table whose AMX Mod X access flags contain
 `ADMIN_FLAG` (default `c`, kick). The rank plugin saves by SteamID and keeps an
@@ -265,10 +276,8 @@ undercounted by at most one poll interval. Days end at midnight in
 
 The admin table lists every current admin with hours in the last 7 and 30 days
 (recorded by the bot, so these start at zero on first deploy), season hours
-from the rank system's own play time, and when they were last seen. Set
-`ADMIN_ACTIVITY_CHANNEL_ID` to a private staff channel to keep it posted and
-updated; the bot refuses a channel that @everyone can view. `/admin-activity`
-shows the same table privately to members with Manage Server.
+from the rank system's own play time, and when they were last seen.
+`/admin-activity` shows the same table privately to members with Manage Server.
 
 ### Event logs, welcomes, and automatic roles
 

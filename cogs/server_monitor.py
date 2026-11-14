@@ -15,12 +15,12 @@ from utils.constants import (
     ACTIVITY_ALERT_ROLE_ID, SERVER_POLL_SECONDS, DASHBOARD_REFRESH_SECONDS,
     ACTIVITY_HUMAN_THRESHOLD, ACTIVITY_SUSTAIN_SECONDS, ACTIVITY_REARM_BELOW,
     ACTIVITY_REARM_SECONDS, ACTIVITY_COOLDOWN_SECONDS, AUTO_ROLE_IDS, LEADERBOARD_REFRESH_SECONDS,
-    ADMIN_ACTIVITY_CHANNEL_ID, ADMIN_FLAG, ACTIVITY_REFRESH_SECONDS, ACTIVITY_HISTORY_DAYS,
+    STAFF_ACTIVITY_CHANNEL_ID, ADMIN_FLAG, ACTIVITY_REFRESH_SECONDS, ACTIVITY_HISTORY_DAYS,
     ACTIVITY_UTC_OFFSET,
 )
 from utils.activity import (
-    PERIODS, AdminTracker, admin_rows, build_series, day_key, format_admin_table,
-    render_activity_graph, zone_label,
+    PERIOD_OPTIONS, AdminTracker, admin_rows, build_series, day_key, format_admin_table,
+    period_for, render_activity_graph, zone_label,
 )
 from utils.embeds import make_embed
 from utils.server_management import log_code_block
@@ -29,6 +29,8 @@ from utils.server_monitor import ActivityWindow, human_count
 
 logger = logging.getLogger(__name__)
 SERVER_KEY = f"{SERVER_ADDRESS[0]}:{SERVER_ADDRESS[1]}"
+PERIOD_SELECT_ID = "activity_graph:period"
+PERIOD_KEYS = {key for key, _ in PERIOD_OPTIONS}
 
 
 class ServerMonitor(commands.Cog):
@@ -49,10 +51,12 @@ class ServerMonitor(commands.Cog):
         self.admin_tracker = AdminTracker(max_gap=SERVER_POLL_SECONDS * 2 + 10)
         self.last_activity_post = None
         self.last_prune = None
+        self.graph_period = "24h"
+        self.period_view = None
 
     async def cog_load(self):
         if not GUILD_ID:
-            if DASHBOARD_CHANNEL_ID or ACTIVITY_ALERT_CHANNEL_ID or ADMIN_ACTIVITY_CHANNEL_ID:
+            if DASHBOARD_CHANNEL_ID or ACTIVITY_ALERT_CHANNEL_ID or STAFF_ACTIVITY_CHANNEL_ID:
                 raise ValueError("GUILD_ID is required for the server dashboard/alerts")
             return
         if SERVER_POLL_SECONDS < 10 or DASHBOARD_REFRESH_SECONDS < SERVER_POLL_SECONDS:
@@ -69,14 +73,17 @@ class ServerMonitor(commands.Cog):
             raise ValueError("Leaderboard refresh must be >= polling interval")
         if ACTIVITY_REFRESH_SECONDS < SERVER_POLL_SECONDS:
             raise ValueError("Activity refresh must be >= polling interval")
-        if ACTIVITY_HISTORY_DAYS < 30:
-            raise ValueError("ACTIVITY_HISTORY_DAYS must be at least 30 for the 30-day graph")
+        if ACTIVITY_HISTORY_DAYS < 2:
+            raise ValueError("ACTIVITY_HISTORY_DAYS must be at least 2 for the 24-hour graph")
         if not -12 <= ACTIVITY_UTC_OFFSET <= 14:
             raise ValueError("ACTIVITY_UTC_OFFSET must be between -12 and 14")
         if len(ADMIN_FLAG) != 1 or not ADMIN_FLAG.isalpha() or not ADMIN_FLAG.islower():
             raise ValueError("ADMIN_FLAG must be a single lowercase AMX Mod X flag letter")
         await self.bot.db_bot.ensure_server_monitor_schema()
         await self.bot.db_bot.ensure_activity_schema()
+        # Keep the graph's period dropdown working on messages posted before a restart.
+        self.period_view = self.graph_view(self.graph_period)[0]
+        self.bot.add_view(self.period_view)
         if DASHBOARD_CHANNEL_ID:
             await self.bot.db_bot.ensure_leaderboard_schema()
         self.poll.change_interval(seconds=SERVER_POLL_SECONDS)
@@ -84,6 +91,8 @@ class ServerMonitor(commands.Cog):
 
     def cog_unload(self):
         self.poll.cancel()
+        if self.period_view is not None:
+            self.period_view.stop()  # drop the restart handler with the cog
 
     def channel(self, channel_id):
         channel = self.bot.get_channel(channel_id)
@@ -256,14 +265,56 @@ class ServerMonitor(commands.Cog):
         await self.bot.db_bot.prune_activity_samples(SERVER_KEY, wall - ACTIVITY_HISTORY_DAYS * 86400)
 
     # ---------------- activity output ----------------
-    async def activity_png(self, period_key):
-        period = PERIODS[period_key]
+    async def activity_png(self, key):
         end = time.time()
-        rows = await self.bot.db_bot.get_activity_buckets(
-            SERVER_KEY, end - period.seconds - period.bucket, period.bucket, ACTIVITY_UTC_OFFSET * 3600)
+        first = await self.bot.db_bot.get_first_activity_ts(SERVER_KEY)
+        period = period_for(key, first, end)
+        fetch = self.bot.db_bot.get_hourly_buckets if period.hourly else self.bot.db_bot.get_activity_buckets
+        rows = await fetch(SERVER_KEY, end - period.seconds - period.bucket, period.bucket, ACTIVITY_UTC_OFFSET * 3600)
         start, points = build_series(rows, period, end, ACTIVITY_UTC_OFFSET)
-        return await asyncio.to_thread(render_activity_graph, points, start, period,
-                                       discord.utils.utcnow(), ACTIVITY_UTC_OFFSET)
+        png = await asyncio.to_thread(render_activity_graph, points, start, period, discord.utils.utcnow(),
+                                      ACTIVITY_UTC_OFFSET, first_ts=first)
+        return png, period
+
+    def graph_view(self, key, period=None):
+        """The graph card: the image plus a dropdown to change its time span."""
+        select = discord.ui.Select(
+            custom_id=PERIOD_SELECT_ID, placeholder="Time span",
+            options=[discord.SelectOption(label=label, value=value, default=value == key)
+                     for value, label in PERIOD_OPTIONS],
+        )
+        select.callback = self.on_period_selected
+        description = f"DD2 players, {period.label.lower()}: average and peak." if period else "DD2 players"
+        view = discord.ui.LayoutView(timeout=None)
+        view.add_item(discord.ui.Container(
+            discord.ui.MediaGallery(discord.MediaGalleryItem("attachment://dd2-activity.png",
+                                                             description=description)),
+            discord.ui.ActionRow(select),
+        ))
+        return view, description
+
+    def graph_file(self, png, description):
+        return discord.File(BytesIO(png), filename="dd2-activity.png", description=description)
+
+    async def on_period_selected(self, interaction: discord.Interaction):
+        key = (interaction.data.get("values") or [None])[0]
+        if key not in PERIOD_KEYS:
+            await interaction.response.send_message("That time span is not available.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            png, period = await self.activity_png(key)
+        except Exception:
+            logger.exception("Could not draw the %s activity graph", key)
+            await interaction.followup.send("Couldn't draw that graph. Try again shortly.", ephemeral=True)
+            return
+        self.graph_period = key  # the 10-minute refresh keeps the chosen span
+        view, description = self.graph_view(key, period)
+        file = self.graph_file(png, description)
+        try:
+            await interaction.edit_original_response(attachments=[file], view=view)
+        finally:
+            file.close()
 
     async def admin_activity_embed(self):
         admins = await self.bot.db_live.get_admins(ADMIN_FLAG)
@@ -309,39 +360,37 @@ class ServerMonitor(commands.Cog):
             self.message_ids[kind] = message.id
         return message
 
+    def staff_channel(self):
+        channel = self.channel(STAFF_ACTIVITY_CHANNEL_ID)
+        if channel.permissions_for(channel.guild.default_role).view_channel:
+            raise ValueError("STAFF_ACTIVITY_CHANNEL_ID must be a private staff channel")
+        return channel
+
     async def post_activity_graph(self):
-        png = await self.activity_png("24h")
-        description = "DD2 players over the last 24 hours: average and peak per 15 minutes."
-        view = discord.ui.LayoutView(timeout=None)
-        view.add_item(discord.ui.Container(discord.ui.MediaGallery(
-            discord.MediaGalleryItem("attachment://dd2-activity.png", description=description),
-        )))
-        file = discord.File(BytesIO(png), filename="dd2-activity.png", description=description)
+        png, period = await self.activity_png(self.graph_period)
+        view, description = self.graph_view(self.graph_period, period)
+        file = self.graph_file(png, description)
         try:
-            await self.upsert_message("activity_graph", self.channel(DASHBOARD_CHANNEL_ID), view=view, file=file)
+            await self.upsert_message("activity_graph", self.staff_channel(), view=view, file=file)
         finally:
             file.close()
 
     async def post_admin_activity(self):
-        channel = self.channel(ADMIN_ACTIVITY_CHANNEL_ID)
-        if channel.permissions_for(channel.guild.default_role).view_channel:
-            raise ValueError("ADMIN_ACTIVITY_CHANNEL_ID must be a private staff channel")
-        await self.upsert_message("admin_activity", channel, embed=await self.admin_activity_embed())
+        await self.upsert_message("admin_activity", self.staff_channel(), embed=await self.admin_activity_embed())
 
     # ---------------- slash commands ----------------
-    @app_commands.command(name="server-activity", description="Players on the DD2 server over time")
+    @app_commands.command(name="server-activity", description="[Admin] Players on the DD2 server over time")
     @app_commands.describe(period="Time span to show (default: last 24 hours)")
-    @app_commands.choices(period=[
-        app_commands.Choice(name="Last 24 hours", value="24h"),
-        app_commands.Choice(name="Last 7 days", value="7d"),
-        app_commands.Choice(name="Last 30 days", value="30d"),
-    ])
+    @app_commands.choices(period=[app_commands.Choice(name=label, value=value) for value, label in PERIOD_OPTIONS])
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(manage_guild=True)
     async def server_activity(self, interaction: discord.Interaction,
                               period: app_commands.Choice[str] | None = None):
         key = period.value if period else "24h"
-        await interaction.response.defer()
-        png = await self.activity_png(key)
-        await interaction.followup.send(file=discord.File(BytesIO(png), filename=f"dd2-activity-{key}.png"))
+        await interaction.response.defer(ephemeral=True)
+        png, _ = await self.activity_png(key)
+        await interaction.followup.send(file=discord.File(BytesIO(png), filename=f"dd2-activity-{key}.png"),
+                                        ephemeral=True)
 
     @app_commands.command(name="admin-activity", description="[Admin] Hours each admin has spent on the DD2 server")
     @app_commands.default_permissions(manage_guild=True)
@@ -393,16 +442,13 @@ class ServerMonitor(commands.Cog):
                     logger.exception("Could not refresh season leaderboard")
             if self.last_activity_post is None or now - self.last_activity_post >= ACTIVITY_REFRESH_SECONDS:
                 self.last_activity_post = now
-                if DASHBOARD_CHANNEL_ID:
-                    try:
-                        await self.post_activity_graph()
-                    except Exception:
-                        logger.exception("Could not refresh the server activity graph")
-                if ADMIN_ACTIVITY_CHANNEL_ID:
-                    try:
-                        await self.post_admin_activity()
-                    except Exception:
-                        logger.exception("Could not refresh the admin activity table")
+                if STAFF_ACTIVITY_CHANNEL_ID:
+                    for post, what in ((self.post_activity_graph, "server activity graph"),
+                                       (self.post_admin_activity, "admin activity table")):
+                        try:
+                            await post()
+                        except Exception:
+                            logger.exception("Could not refresh the %s", what)
         except Exception:
             self.window.high_since = self.window.low_since = None
             logger.exception("Server monitor iteration failed")

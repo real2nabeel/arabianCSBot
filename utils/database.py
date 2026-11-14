@@ -284,6 +284,13 @@ class Database:
             "PRIMARY KEY (server_key, ts)) CHARACTER SET utf8mb4"
         )
         await self.execute(
+            "CREATE TABLE IF NOT EXISTS server_activity_hourly ("
+            "server_key VARCHAR(255) NOT NULL, hour_ts INT UNSIGNED NOT NULL, "
+            "polls INT UNSIGNED NOT NULL DEFAULT 0, samples INT UNSIGNED NOT NULL DEFAULT 0, "
+            "humans_sum INT UNSIGNED NOT NULL DEFAULT 0, peak SMALLINT UNSIGNED NULL, "
+            "PRIMARY KEY (server_key, hour_ts)) CHARACTER SET utf8mb4"
+        )
+        await self.execute(
             "CREATE TABLE IF NOT EXISTS admin_activity ("
             "server_key VARCHAR(255) NOT NULL, steam_id VARCHAR(64) NOT NULL, "
             "day DATE NOT NULL, seconds INT UNSIGNED NOT NULL DEFAULT 0, "
@@ -303,10 +310,25 @@ class Database:
         )
 
     async def add_activity_sample(self, server_key, ts, humans):
-        """One poll result; humans is None when the server did not answer."""
-        await self.execute(
+        """One poll result; humans is None when the server did not answer.
+
+        Raw samples feed the 24-hour graph and are pruned; the hourly rollup
+        feeds every longer period and is kept forever.
+        """
+        ts = int(ts)
+        added = await self.execute(
             "INSERT IGNORE INTO server_activity (server_key, ts, humans) VALUES (%s,%s,%s)",
-            (server_key, int(ts), humans),
+            (server_key, ts, humans),
+        )
+        if added != 1:
+            return
+        counted = humans is not None
+        await self.execute(
+            "INSERT INTO server_activity_hourly (server_key, hour_ts, polls, samples, humans_sum, peak) "
+            "VALUES (%s,%s,1,%s,%s,%s) ON DUPLICATE KEY UPDATE polls=polls+1, "
+            "samples=samples+VALUES(samples), humans_sum=humans_sum+VALUES(humans_sum), "
+            "peak=GREATEST(COALESCE(peak, VALUES(peak)), COALESCE(VALUES(peak), peak))",
+            (server_key, ts - ts % 3600, int(counted), humans or 0, humans),
         )
 
     async def prune_activity_samples(self, server_key, before):
@@ -328,6 +350,23 @@ class Database:
             (int(offset), int(bucket), server_key, int(since)),
         )
         return {int(row["idx"]): row for row in rows}
+
+    async def get_hourly_buckets(self, server_key, since, bucket, offset):
+        """Same shape as get_activity_buckets, from the hourly rollup (bucket is whole hours)."""
+        rows = await self.fetch_all(
+            "SELECT FLOOR((hour_ts + %s) / %s) AS idx, SUM(humans_sum) / NULLIF(SUM(samples), 0) AS avg, "
+            "MAX(peak) AS peak, SUM(samples) AS samples "
+            "FROM server_activity_hourly WHERE server_key=%s AND hour_ts>=%s GROUP BY idx",
+            (int(offset), int(bucket), server_key, int(since)),
+        )
+        return {int(row["idx"]): row for row in rows}
+
+    async def get_first_activity_ts(self, server_key):
+        row = await self.fetch_one(
+            "SELECT MIN(hour_ts) AS first FROM server_activity_hourly WHERE server_key=%s",
+            (server_key,),
+        )
+        return int(row["first"]) if row and row["first"] is not None else None
 
     async def credit_admin_time(self, server_key, day, seconds, steam_ids):
         for steam_id in steam_ids:

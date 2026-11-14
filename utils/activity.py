@@ -16,21 +16,89 @@ OFFLINE = "#d9534f"
 GRID = "#323b4e"
 
 
+HOUR, DAY = 3600, 86400
+
+
 @dataclass(frozen=True)
 class Period:
     key: str
-    label: str
+    label: str  # shown on the image
+    option: str  # shown in the period dropdown
     seconds: int
     bucket: int  # seconds per plotted point
-    tick: int  # seconds between x-axis labels
     tick_format: str
+    tick_seconds: int = 0  # x-axis label spacing, or…
+    tick_months: int = 0  # …every N calendar months
+
+    @property
+    def hourly(self):
+        """Hour-aligned buckets read the kept-forever hourly table; finer ones read raw samples."""
+        return self.bucket % HOUR == 0
 
 
-PERIODS = {
-    "24h": Period("24h", "LAST 24 HOURS", 86400, 900, 3 * 3600, "%H:%M"),
-    "7d": Period("7d", "LAST 7 DAYS", 7 * 86400, 3600, 86400, "%a %d"),
-    "30d": Period("30d", "LAST 30 DAYS", 30 * 86400, 6 * 3600, 5 * 86400, "%d %b"),
-}
+PERIODS = {p.key: p for p in (
+    Period("24h", "LAST 24 HOURS", "24 hours", DAY, 900, "%H:%M", tick_seconds=3 * HOUR),
+    Period("7d", "LAST 7 DAYS", "7 days", 7 * DAY, HOUR, "%a %d", tick_seconds=DAY),
+    Period("1m", "LAST MONTH", "1 month", 30 * DAY, 6 * HOUR, "%d %b", tick_seconds=5 * DAY),
+    Period("3m", "LAST 3 MONTHS", "3 months", 91 * DAY, DAY, "%d %b", tick_seconds=14 * DAY),
+    Period("6m", "LAST 6 MONTHS", "6 months", 182 * DAY, DAY, "%b", tick_months=1),
+    Period("1y", "LAST YEAR", "1 year", 365 * DAY, 3 * DAY, "%b %Y", tick_months=2),
+    Period("3y", "LAST 3 YEARS", "3 years", 1095 * DAY, 7 * DAY, "%b %Y", tick_months=6),
+)}
+MAX_KEY = "max"
+PERIOD_OPTIONS = [(p.key, p.option) for p in PERIODS.values()] + [(MAX_KEY, "Max (all time)")]
+
+
+def period_for(key, first_ts, end):
+    """A fixed period, or for "max" one spanning everything recorded so far."""
+    if key != MAX_KEY:
+        return PERIODS[key]
+    span = max(DAY, end - first_ts) if first_ts else DAY
+    if span <= 2 * DAY:
+        bucket = 900
+    else:
+        bucket = next((b for b in (HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 3 * DAY,
+                                   7 * DAY, 14 * DAY) if span / b <= 200), 30 * DAY)
+    seconds = -(-int(span) // bucket) * bucket
+    if span <= 2 * DAY:
+        ticks = {"tick_seconds": 3 * HOUR, "tick_format": "%H:%M"}
+    elif span <= 10 * DAY:
+        ticks = {"tick_seconds": DAY, "tick_format": "%a %d"}
+    elif span <= 60 * DAY:
+        ticks = {"tick_seconds": 7 * DAY, "tick_format": "%d %b"}
+    elif span <= 200 * DAY:
+        ticks = {"tick_months": 1, "tick_format": "%b"}
+    elif span <= 800 * DAY:
+        ticks = {"tick_months": 3, "tick_format": "%b %Y"}
+    else:
+        ticks = {"tick_months": 12, "tick_format": "%Y"}
+    return Period(MAX_KEY, "ALL TIME", "Max (all time)", seconds, bucket, **ticks)
+
+
+def tick_times(start, end, period, offset_hours):
+    """X-axis label moments on whole local hours/days, or on the 1st of every N months."""
+    if period.tick_months:
+        zone = local_zone(offset_hours)
+        moment = datetime.fromtimestamp(start, zone).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        year, month = moment.year, moment.month
+        ticks = []
+        while True:
+            if (month - 1) % period.tick_months == 0:
+                ts = datetime(year, month, 1, tzinfo=zone).timestamp()
+                if ts >= end:
+                    return ticks
+                if ts >= start:
+                    ticks.append(ts)
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    step = period.tick_seconds
+    tick = start - (start + offset_hours * HOUR) % step
+    if tick < start:
+        tick += step
+    ticks = []
+    while tick < end:
+        ticks.append(tick)
+        tick += step
+    return ticks
 
 
 def local_zone(offset_hours):
@@ -112,8 +180,13 @@ def nice_ceiling(value):
     return ((int(value) + 15) // 16) * 16
 
 
-def render_activity_graph(points, start, period, updated_at, offset_hours, server_name="DD2"):
-    """1800x760 PNG of average and peak human players per bucket."""
+def render_activity_graph(points, start, period, updated_at, offset_hours, server_name="DD2", first_ts=None):
+    """1800x760 PNG of average and peak human players per bucket.
+
+    ``first_ts`` is the first recorded sample; when it falls inside the period
+    the image says when recording started, so an empty left side isn't read as
+    an empty server.
+    """
     zone = local_zone(offset_hours)
     image = Image.new("RGB", (1800, 760), BACKGROUND)
     draw = ImageDraw.Draw(image)
@@ -125,7 +198,17 @@ def render_activity_graph(points, start, period, updated_at, offset_hours, serve
     stats = summarize(points)
     if stats:
         peak_time = datetime.fromtimestamp(start + stats["peak_index"] * period.bucket, zone)
-        peak_when = peak_time.strftime("%H:%M" if period.key == "24h" else "%a %d %b, %H:%M")
+        if period.seconds <= DAY:
+            peak_format = "%H:%M"
+        elif period.bucket < DAY:
+            peak_format = "%a %d %b, %H:%M"
+        elif period.bucket == DAY:
+            peak_format = "%d %b %Y"
+        elif period.bucket == 7 * DAY:
+            peak_format = "week of %d %b %Y"
+        else:
+            peak_format = "around %d %b %Y"
+        peak_when = peak_time.strftime(peak_format)
         summary = [("PEAK", f"{stats['peak']} players", peak_when),
                    ("AVERAGE", f"{stats['average']:.1f} players", "while online")]
         x = 50
@@ -184,18 +267,15 @@ def render_activity_graph(points, start, period, updated_at, offset_hours, serve
             draw.rectangle((left + i * width, bottom - 8, left + (i + 1) * width, bottom), fill=OFFLINE)
     draw.line((left, bottom, right, bottom), fill=MUTED, width=2)
 
-    # X-axis labels on whole local hours/days.
-    first_tick = start - (start + offset_hours * 3600) % period.tick
-    if first_tick < start:
-        first_tick += period.tick
     end = start + count * period.bucket
-    tick = first_tick
-    while tick < end:
+    for tick in tick_times(start, end, period, offset_hours):
         x = left + (tick - start) / period.bucket * width
         draw.line((x, bottom, x, bottom + 8), fill=MUTED, width=2)
         label = datetime.fromtimestamp(tick, zone).strftime(period.tick_format)
         draw.text((x, bottom + 14), label, font=small, fill=MUTED, anchor="ma")
-        tick += period.tick
+    if first_ts and start < first_ts < end:
+        draw.text((1750, 152), f"Recording since {datetime.fromtimestamp(first_ts, zone):%d %b %Y}",
+                  font=small, fill=MUTED, anchor="ra")
 
     if not stats:
         draw.rounded_rectangle((560, 360, 1240, 470), radius=8, fill=SURFACE)

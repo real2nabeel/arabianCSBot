@@ -114,8 +114,8 @@ ACTIVITY_COOLDOWN_SECONDS = _int_env("ACTIVITY_COOLDOWN_SECONDS", 7200)
 # every SERVER_POLL_SECONDS poll; admins are players in the live rank table
 # whose AMX Mod X access flags contain ADMIN_FLAG ("c" = kick, the usual admin
 # marker). Times and day boundaries use ACTIVITY_UTC_OFFSET (hours).
-ADMIN_ACTIVITY_CHANNEL_ID = _int_env("ADMIN_ACTIVITY_CHANNEL_ID")
+STAFF_ACTIVITY_CHANNEL_ID = _int_env("STAFF_ACTIVITY_CHANNEL_ID")
 ADMIN_FLAG = os.getenv("ADMIN_FLAG", "c").strip() or "c"
 ACTIVITY_REFRESH_SECONDS = _int_env("ACTIVITY_REFRESH_SECONDS", 600)
-ACTIVITY_HISTORY_DAYS = _int_env("ACTIVITY_HISTORY_DAYS", 90)
+ACTIVITY_HISTORY_DAYS = _int_env("ACTIVITY_HISTORY_DAYS", 30)
 ACTIVITY_UTC_OFFSET = _int_env("ACTIVITY_UTC_OFFSET", 3)
