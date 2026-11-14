@@ -273,6 +273,168 @@ class Database:
             (now, guild_id, server_key, now - cooldown),
         ) == 1
 
+    # ------------------------------------------------------------------ #
+    # Server activity graph and admin activity (bot schema)
+    # ------------------------------------------------------------------ #
+    async def ensure_activity_schema(self):
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS server_activity ("
+            "server_key VARCHAR(255) NOT NULL, ts INT UNSIGNED NOT NULL, "
+            "humans SMALLINT UNSIGNED NULL, "
+            "PRIMARY KEY (server_key, ts)) CHARACTER SET utf8mb4"
+        )
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS server_activity_hourly ("
+            "server_key VARCHAR(255) NOT NULL, hour_ts INT UNSIGNED NOT NULL, "
+            "polls INT UNSIGNED NOT NULL DEFAULT 0, samples INT UNSIGNED NOT NULL DEFAULT 0, "
+            "humans_sum INT UNSIGNED NOT NULL DEFAULT 0, peak SMALLINT UNSIGNED NULL, "
+            "PRIMARY KEY (server_key, hour_ts)) CHARACTER SET utf8mb4"
+        )
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS admin_activity ("
+            "server_key VARCHAR(255) NOT NULL, steam_id VARCHAR(64) NOT NULL, "
+            "day DATE NOT NULL, seconds INT UNSIGNED NOT NULL DEFAULT 0, "
+            "PRIMARY KEY (server_key, steam_id, day)) CHARACTER SET utf8mb4"
+        )
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS admin_seen ("
+            "server_key VARCHAR(255) NOT NULL, steam_id VARCHAR(64) NOT NULL, "
+            "nick VARCHAR(64) NOT NULL, last_seen INT UNSIGNED NOT NULL, "
+            "PRIMARY KEY (server_key, steam_id)) CHARACTER SET utf8mb4"
+        )
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS monitor_messages ("
+            "guild_id BIGINT UNSIGNED NOT NULL, server_key VARCHAR(255) NOT NULL, "
+            "kind VARCHAR(32) NOT NULL, message_id BIGINT UNSIGNED NOT NULL, "
+            "PRIMARY KEY (guild_id, server_key, kind)) CHARACTER SET utf8mb4"
+        )
+
+    async def add_activity_sample(self, server_key, ts, humans):
+        """One poll result; humans is None when the server did not answer.
+
+        Raw samples feed the 24-hour graph and are pruned; the hourly rollup
+        feeds every longer period and is kept forever.
+        """
+        ts = int(ts)
+        added = await self.execute(
+            "INSERT IGNORE INTO server_activity (server_key, ts, humans) VALUES (%s,%s,%s)",
+            (server_key, ts, humans),
+        )
+        if added != 1:
+            return
+        counted = humans is not None
+        await self.execute(
+            "INSERT INTO server_activity_hourly (server_key, hour_ts, polls, samples, humans_sum, peak) "
+            "VALUES (%s,%s,1,%s,%s,%s) ON DUPLICATE KEY UPDATE polls=polls+1, "
+            "samples=samples+VALUES(samples), humans_sum=humans_sum+VALUES(humans_sum), "
+            "peak=GREATEST(COALESCE(peak, VALUES(peak)), COALESCE(VALUES(peak), peak))",
+            (server_key, ts - ts % 3600, int(counted), humans or 0, humans),
+        )
+
+    async def prune_activity_samples(self, server_key, before):
+        return await self.execute(
+            "DELETE FROM server_activity WHERE server_key=%s AND ts<%s",
+            (server_key, int(before)),
+        )
+
+    async def get_activity_buckets(self, server_key, since, bucket, offset):
+        """Average and peak players per bucket, keyed by bucket index.
+
+        ``samples`` counts successful polls only, so a bucket whose polls all
+        failed (humans NULL) reads as an outage rather than an empty server.
+        """
+        rows = await self.fetch_all(
+            "SELECT FLOOR((ts + %s) / %s) AS idx, AVG(humans) AS avg, "
+            "MAX(humans) AS peak, COUNT(humans) AS samples "
+            "FROM server_activity WHERE server_key=%s AND ts>=%s GROUP BY idx",
+            (int(offset), int(bucket), server_key, int(since)),
+        )
+        return {int(row["idx"]): row for row in rows}
+
+    async def get_hourly_buckets(self, server_key, since, bucket, offset):
+        """Same shape as get_activity_buckets, from the hourly rollup (bucket is whole hours)."""
+        rows = await self.fetch_all(
+            "SELECT FLOOR((hour_ts + %s) / %s) AS idx, SUM(humans_sum) / NULLIF(SUM(samples), 0) AS avg, "
+            "MAX(peak) AS peak, SUM(samples) AS samples "
+            "FROM server_activity_hourly WHERE server_key=%s AND hour_ts>=%s GROUP BY idx",
+            (int(offset), int(bucket), server_key, int(since)),
+        )
+        return {int(row["idx"]): row for row in rows}
+
+    async def get_first_activity_ts(self, server_key):
+        row = await self.fetch_one(
+            "SELECT MIN(hour_ts) AS first FROM server_activity_hourly WHERE server_key=%s",
+            (server_key,),
+        )
+        return int(row["first"]) if row and row["first"] is not None else None
+
+    async def credit_admin_time(self, server_key, day, seconds, steam_ids):
+        for steam_id in steam_ids:
+            await self.execute(
+                "INSERT INTO admin_activity (server_key, steam_id, day, seconds) "
+                "VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE seconds=seconds+VALUES(seconds)",
+                (server_key, steam_id, day, int(seconds)),
+            )
+
+    async def mark_admins_seen(self, server_key, admins, ts):
+        """``admins``: (steam_id, nick) pairs currently on the server."""
+        for steam_id, nick in admins:
+            await self.execute(
+                "INSERT INTO admin_seen (server_key, steam_id, nick, last_seen) VALUES (%s,%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE nick=VALUES(nick), last_seen=VALUES(last_seen)",
+                (server_key, steam_id, str(nick or "")[:64], int(ts)),
+            )
+
+    async def get_admin_activity(self, server_key, week_start, month_start):
+        """steam_id -> seconds since each start day (inclusive) and last seen time."""
+        rows = await self.fetch_all(
+            "SELECT s.steam_id, s.last_seen, "
+            "COALESCE(SUM(CASE WHEN a.day>=%s THEN a.seconds END), 0) AS week, "
+            "COALESCE(SUM(CASE WHEN a.day>=%s THEN a.seconds END), 0) AS month "
+            "FROM admin_seen s LEFT JOIN admin_activity a "
+            "ON a.server_key=s.server_key AND a.steam_id=s.steam_id "
+            "WHERE s.server_key=%s GROUP BY s.steam_id, s.last_seen",
+            (week_start, month_start, server_key),
+        )
+        return {row["steam_id"]: row for row in rows}
+
+    async def get_monitor_message_id(self, guild_id, server_key, kind):
+        row = await self.fetch_one(
+            "SELECT message_id FROM monitor_messages WHERE guild_id=%s AND server_key=%s AND kind=%s",
+            (guild_id, server_key, kind),
+        )
+        return row["message_id"] if row else None
+
+    async def set_monitor_message_id(self, guild_id, server_key, kind, message_id):
+        await self.execute(
+            "INSERT INTO monitor_messages (guild_id, server_key, kind, message_id) VALUES (%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE message_id=VALUES(message_id)",
+            (guild_id, server_key, kind, message_id),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Admins in the game rank table (live schema)
+    # ------------------------------------------------------------------ #
+    async def get_admins(self, flag):
+        """Players whose AMX Mod X access flags contain ``flag``, keyed by SteamID.
+
+        rank_system is saved by SteamID (SAVE_TYPE 2), so ``Player`` is the
+        stable identity and ``Nick`` the latest in-game name.
+        """
+        if len(flag) != 1 or not flag.isalpha() or not flag.islower():
+            raise ValueError("ADMIN_FLAG must be a single lowercase AMX Mod X flag letter")
+        rows = await self.fetch_all(
+            "SELECT `Player`, `Nick`, `Online`, `Played Time`, `Flags` FROM rank_system "
+            "WHERE `Flags` LIKE %s",
+            (f"%{flag}%",),
+        )
+        return [{
+            "steam_id": row["Player"],
+            "nick": row["Nick"] or row["Player"],
+            "online": bool(row["Online"]),
+            "season_seconds": int(row["Played Time"] or 0),
+        } for row in rows if flag in (row["Flags"] or "")]
+
     async def close(self):
         if self.pool is not None:
             self.pool.close()
