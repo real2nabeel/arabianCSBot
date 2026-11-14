@@ -54,6 +54,8 @@ Every ranking command comes in two flavours: the plain command reads the
 | `/topweapon <weapon>` · `/topweapon-history <weapon>` | Top killers with a specific weapon (with autocomplete) |
 | `/serverstats` · `/serverstats-history` | Aggregate metrics across all registered players |
 | `/ip` | Server address and live player count |
+| `/server-activity [period]` | Graph of players on DD2 over the last 24 hours, 7 days or 30 days |
+| `/admin-activity` | Staff only (Manage Server): hours each admin spent on DD2, shown only to you |
 
 ## Tech Stack
 
@@ -240,6 +242,33 @@ channels must belong to that guild. Deploy changes with:
 ```bash
 docker compose up -d --build --force-recreate bot
 ```
+
+### Server activity graph and admin activity
+
+Every poll also records the number of human players in `server_activity` in
+`DB_NAME_BOT`, with an empty value when the server does not answer.
+Samples older than `ACTIVITY_HISTORY_DAYS` (default 90) are deleted hourly.
+A third message in `DASHBOARD_CHANNEL_ID` shows the last 24 hours as an image
+(average and peak per 15 minutes, outages marked in red), redrawn every
+`ACTIVITY_REFRESH_SECONDS` (default 600). `/server-activity` draws the same
+graph for 24 hours, 7 days (hourly) or 30 days (every 6 hours).
+
+Admins are players in the live rank table whose AMX Mod X access flags contain
+`ADMIN_FLAG` (default `c`, kick). The rank plugin saves by SteamID and keeps an
+`Online` flag, so no game plugin change is needed. At each poll the bot credits
+the time since the previous poll to every admin who was online at both polls,
+by day in `admin_activity`, and records their name and last-seen time in
+`admin_seen`. Nothing is credited while the server is unreachable, after a
+failed rank query, or across a gap longer than two polls, so a session is
+undercounted by at most one poll interval. Days end at midnight in
+`ACTIVITY_UTC_OFFSET` (default 3, Arabia Standard Time).
+
+The admin table lists every current admin with hours in the last 7 and 30 days
+(recorded by the bot, so these start at zero on first deploy), season hours
+from the rank system's own play time, and when they were last seen. Set
+`ADMIN_ACTIVITY_CHANNEL_ID` to a private staff channel to keep it posted and
+updated; the bot refuses a channel that @everyone can view. `/admin-activity`
+shows the same table privately to members with Manage Server.
 
 ### Event logs, welcomes, and automatic roles
 

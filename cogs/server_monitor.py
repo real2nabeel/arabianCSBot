@@ -1,11 +1,13 @@
 """One live dashboard and opt-in population alerts for the configured server."""
 import asyncio
+from datetime import timedelta
 from io import BytesIO
 import logging
 import time
 
 import a2s
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from utils.constants import (
@@ -13,6 +15,12 @@ from utils.constants import (
     ACTIVITY_ALERT_ROLE_ID, SERVER_POLL_SECONDS, DASHBOARD_REFRESH_SECONDS,
     ACTIVITY_HUMAN_THRESHOLD, ACTIVITY_SUSTAIN_SECONDS, ACTIVITY_REARM_BELOW,
     ACTIVITY_REARM_SECONDS, ACTIVITY_COOLDOWN_SECONDS, AUTO_ROLE_IDS, LEADERBOARD_REFRESH_SECONDS,
+    ADMIN_ACTIVITY_CHANNEL_ID, ADMIN_FLAG, ACTIVITY_REFRESH_SECONDS, ACTIVITY_HISTORY_DAYS,
+    ACTIVITY_UTC_OFFSET,
+)
+from utils.activity import (
+    PERIODS, AdminTracker, admin_rows, build_series, day_key, format_admin_table,
+    render_activity_graph, zone_label,
 )
 from utils.embeds import make_embed
 from utils.server_management import log_code_block
@@ -38,12 +46,15 @@ class ServerMonitor(commands.Cog):
         self.leaderboard_rows = None
         self.leaderboard_png = None
         self.leaderboard_updated = None
+        self.admin_tracker = AdminTracker(max_gap=SERVER_POLL_SECONDS * 2 + 10)
+        self.last_activity_post = None
+        self.last_prune = None
 
     async def cog_load(self):
-        if not (DASHBOARD_CHANNEL_ID or ACTIVITY_ALERT_CHANNEL_ID):
-            return
         if not GUILD_ID:
-            raise ValueError("GUILD_ID is required for the server dashboard/alerts")
+            if DASHBOARD_CHANNEL_ID or ACTIVITY_ALERT_CHANNEL_ID or ADMIN_ACTIVITY_CHANNEL_ID:
+                raise ValueError("GUILD_ID is required for the server dashboard/alerts")
+            return
         if SERVER_POLL_SECONDS < 10 or DASHBOARD_REFRESH_SECONDS < SERVER_POLL_SECONDS:
             raise ValueError("Use polling >=10 seconds and dashboard refresh >= polling")
         if not 0 < ACTIVITY_REARM_BELOW < ACTIVITY_HUMAN_THRESHOLD:
@@ -56,7 +67,16 @@ class ServerMonitor(commands.Cog):
             raise ValueError("The opt-in activity role must not be in AUTO_ROLE_IDS")
         if LEADERBOARD_REFRESH_SECONDS < SERVER_POLL_SECONDS:
             raise ValueError("Leaderboard refresh must be >= polling interval")
+        if ACTIVITY_REFRESH_SECONDS < SERVER_POLL_SECONDS:
+            raise ValueError("Activity refresh must be >= polling interval")
+        if ACTIVITY_HISTORY_DAYS < 30:
+            raise ValueError("ACTIVITY_HISTORY_DAYS must be at least 30 for the 30-day graph")
+        if not -12 <= ACTIVITY_UTC_OFFSET <= 14:
+            raise ValueError("ACTIVITY_UTC_OFFSET must be between -12 and 14")
+        if len(ADMIN_FLAG) != 1 or not ADMIN_FLAG.isalpha() or not ADMIN_FLAG.islower():
+            raise ValueError("ADMIN_FLAG must be a single lowercase AMX Mod X flag letter")
         await self.bot.db_bot.ensure_server_monitor_schema()
+        await self.bot.db_bot.ensure_activity_schema()
         if DASHBOARD_CHANNEL_ID:
             await self.bot.db_bot.ensure_leaderboard_schema()
         self.poll.change_interval(seconds=SERVER_POLL_SECONDS)
@@ -206,6 +226,130 @@ class ServerMonitor(commands.Cog):
                     everyone=False, users=False, roles=[role], replied_user=False,
                 ))
 
+    # ---------------- activity recording ----------------
+    async def record_players(self, info, wall):
+        await self.bot.db_bot.add_activity_sample(SERVER_KEY, wall, human_count(info))
+
+    async def record_admins(self, info, wall, now):
+        if info is None:
+            # Offline server: the rank table's Online flags can be stale.
+            self.admin_tracker.observe(None, now)
+            return
+        try:
+            admins = await self.bot.db_live.get_admins(ADMIN_FLAG)
+        except Exception:
+            self.admin_tracker.observe(None, now)
+            raise
+        online = [a for a in admins if a["online"]]
+        seconds, credited = self.admin_tracker.observe({a["steam_id"] for a in online}, now)
+        if credited:
+            await self.bot.db_bot.credit_admin_time(
+                SERVER_KEY, day_key(wall, ACTIVITY_UTC_OFFSET), seconds, sorted(credited))
+        if online:
+            await self.bot.db_bot.mark_admins_seen(
+                SERVER_KEY, [(a["steam_id"], a["nick"]) for a in online], wall)
+
+    async def prune_samples(self, wall, now):
+        if self.last_prune is not None and now - self.last_prune < 3600:
+            return
+        self.last_prune = now
+        await self.bot.db_bot.prune_activity_samples(SERVER_KEY, wall - ACTIVITY_HISTORY_DAYS * 86400)
+
+    # ---------------- activity output ----------------
+    async def activity_png(self, period_key):
+        period = PERIODS[period_key]
+        end = time.time()
+        rows = await self.bot.db_bot.get_activity_buckets(
+            SERVER_KEY, end - period.seconds - period.bucket, period.bucket, ACTIVITY_UTC_OFFSET * 3600)
+        start, points = build_series(rows, period, end, ACTIVITY_UTC_OFFSET)
+        return await asyncio.to_thread(render_activity_graph, points, start, period,
+                                       discord.utils.utcnow(), ACTIVITY_UTC_OFFSET)
+
+    async def admin_activity_embed(self):
+        admins = await self.bot.db_live.get_admins(ADMIN_FLAG)
+        wall = time.time()
+        today = day_key(wall, ACTIVITY_UTC_OFFSET)
+        activity = await self.bot.db_bot.get_admin_activity(
+            SERVER_KEY, today - timedelta(days=6), today - timedelta(days=29))
+        rows = admin_rows(admins, activity, wall)
+        online = sum(1 for row in rows if row["online"])
+        embed = make_embed(
+            section="Staff", title="🛡️ Admin activity",
+            description=log_code_block(format_admin_table(rows)) if rows else "No admins found in the rank table.",
+        )
+        embed.add_field(name="Admins", value=str(len(rows)))
+        embed.add_field(name="Online now", value=str(online))
+        embed.set_footer(text=f"Hours on DD2 · days end at midnight {zone_label(ACTIVITY_UTC_OFFSET)} · "
+                              "Season is rank system play time • Updated")
+        return embed
+
+    async def upsert_message(self, kind, channel, **payload):
+        """Edit this bot's stored message of ``kind``, or post and remember a new one."""
+        message_id = self.message_ids.get(kind) or await self.bot.db_bot.get_monitor_message_id(
+            GUILD_ID, SERVER_KEY, kind)
+        message = None
+        if message_id:
+            try:
+                message = await channel.fetch_message(message_id)
+            except discord.NotFound:
+                pass
+        if message is not None and message.author.id != self.bot.user.id:
+            raise ValueError(f"Stored {kind} message is not owned by this bot")
+        payload["allowed_mentions"] = discord.AllowedMentions.none()
+        if message is None:
+            if "file" in payload:
+                payload["files"] = [payload.pop("file")]
+            message = await channel.send(**payload)
+            self.message_ids[kind] = message.id
+            await self.bot.db_bot.set_monitor_message_id(GUILD_ID, SERVER_KEY, kind, message.id)
+        else:
+            if "file" in payload:
+                payload["attachments"] = [payload.pop("file")]
+            await message.edit(**payload)
+            self.message_ids[kind] = message.id
+        return message
+
+    async def post_activity_graph(self):
+        png = await self.activity_png("24h")
+        description = "DD2 players over the last 24 hours: average and peak per 15 minutes."
+        view = discord.ui.LayoutView(timeout=None)
+        view.add_item(discord.ui.Container(discord.ui.MediaGallery(
+            discord.MediaGalleryItem("attachment://dd2-activity.png", description=description),
+        )))
+        file = discord.File(BytesIO(png), filename="dd2-activity.png", description=description)
+        try:
+            await self.upsert_message("activity_graph", self.channel(DASHBOARD_CHANNEL_ID), view=view, file=file)
+        finally:
+            file.close()
+
+    async def post_admin_activity(self):
+        channel = self.channel(ADMIN_ACTIVITY_CHANNEL_ID)
+        if channel.permissions_for(channel.guild.default_role).view_channel:
+            raise ValueError("ADMIN_ACTIVITY_CHANNEL_ID must be a private staff channel")
+        await self.upsert_message("admin_activity", channel, embed=await self.admin_activity_embed())
+
+    # ---------------- slash commands ----------------
+    @app_commands.command(name="server-activity", description="Players on the DD2 server over time")
+    @app_commands.describe(period="Time span to show (default: last 24 hours)")
+    @app_commands.choices(period=[
+        app_commands.Choice(name="Last 24 hours", value="24h"),
+        app_commands.Choice(name="Last 7 days", value="7d"),
+        app_commands.Choice(name="Last 30 days", value="30d"),
+    ])
+    async def server_activity(self, interaction: discord.Interaction,
+                              period: app_commands.Choice[str] | None = None):
+        key = period.value if period else "24h"
+        await interaction.response.defer()
+        png = await self.activity_png(key)
+        await interaction.followup.send(file=discord.File(BytesIO(png), filename=f"dd2-activity-{key}.png"))
+
+    @app_commands.command(name="admin-activity", description="[Admin] Hours each admin has spent on the DD2 server")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def admin_activity(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(embed=await self.admin_activity_embed(), ephemeral=True)
+
     @tasks.loop(seconds=30)
     async def poll(self):
         try:
@@ -220,6 +364,13 @@ class ServerMonitor(commands.Cog):
             except Exception:
                 info = None
             now = time.monotonic()
+            wall = time.time()
+            for step in (self.record_players(info, wall), self.record_admins(info, wall, now),
+                         self.prune_samples(wall, now)):
+                try:
+                    await step
+                except Exception:
+                    logger.exception("Activity recording failed")
             if ACTIVITY_ALERT_CHANNEL_ID:
                 try:
                     await self.activity(row, info, human_count(info), now)
@@ -240,6 +391,18 @@ class ServerMonitor(commands.Cog):
                     await self.update_leaderboard()
                 except Exception:
                     logger.exception("Could not refresh season leaderboard")
+            if self.last_activity_post is None or now - self.last_activity_post >= ACTIVITY_REFRESH_SECONDS:
+                self.last_activity_post = now
+                if DASHBOARD_CHANNEL_ID:
+                    try:
+                        await self.post_activity_graph()
+                    except Exception:
+                        logger.exception("Could not refresh the server activity graph")
+                if ADMIN_ACTIVITY_CHANNEL_ID:
+                    try:
+                        await self.post_admin_activity()
+                    except Exception:
+                        logger.exception("Could not refresh the admin activity table")
         except Exception:
             self.window.high_since = self.window.low_since = None
             logger.exception("Server monitor iteration failed")
