@@ -186,6 +186,7 @@ class GraphCardTests(IsolatedAsyncioTestCase):
             get_first_activity_ts=AsyncMock(return_value=None),
             get_activity_buckets=AsyncMock(return_value={}), get_hourly_buckets=AsyncMock(return_value={}),
             get_monitor_message_id=AsyncMock(return_value=None), set_monitor_message_id=AsyncMock(),
+            get_player_months=AsyncMock(return_value={}),
         )
         self.bot = SimpleNamespace(db_bot=self.db_bot, user=SimpleNamespace(id=88))
         self.cog = ServerMonitor(self.bot)

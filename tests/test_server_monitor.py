@@ -101,7 +101,8 @@ class MonitorTests(IsolatedAsyncioTestCase):
     async def test_enabled_extension_starts_and_unloads_without_network(self):
         async with commands.Bot(command_prefix="!", intents=discord.Intents.none()) as bot:
             bot.db_bot = SimpleNamespace(ensure_server_monitor_schema=AsyncMock(), ensure_leaderboard_schema=AsyncMock(),
-                                         ensure_activity_schema=AsyncMock())
+                                         ensure_activity_schema=AsyncMock(),
+                                         ensure_player_months_schema=AsyncMock())
             with patch("cogs.server_monitor.GUILD_ID", 100), \
                  patch("cogs.server_monitor.DASHBOARD_CHANNEL_ID", 99), \
                  patch("cogs.server_monitor.ACTIVITY_ALERT_CHANNEL_ID", 0):

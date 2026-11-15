@@ -296,6 +296,72 @@ def render_activity_graph(points, start, period, updated_at, offset_hours, serve
     return output.getvalue()
 
 
+def month_key(wall_time, offset_hours):
+    """The local calendar month a moment belongs to, as "YYYY-MM"."""
+    return datetime.fromtimestamp(wall_time, local_zone(offset_hours)).strftime("%Y-%m")
+
+
+def shift_month(month, by):
+    year, mon = int(month[:4]), int(month[5:7])
+    index = year * 12 + mon - 1 + by
+    return f"{index // 12:04d}-{index % 12 + 1:02d}"
+
+
+def valid_month(month):
+    return (isinstance(month, str) and len(month) == 7 and month[4] == "-"
+            and month[:4].isdigit() and month[5:].isdigit() and 1 <= int(month[5:]) <= 12)
+
+
+def month_readings(first_counts, last_counts, saved, now_month):
+    """What to save from one look at the live rank table.
+
+    ``first_counts`` / ``last_counts``: month -> players whose First / Last
+    Login falls in it. ``saved``: month -> {"players", ...} already stored.
+
+    A player's Last Login is overwritten each time they play, so counting it
+    gives the number of different players only for the latest month. That
+    month is saved on every look; the month before it keeps being looked at
+    while its last players' logins move on (time zone slack), and the stored
+    count never goes down. Earlier months can't be counted this way and stay
+    empty. New players (First Login, never overwritten) are exact for every
+    month of the season. Months later than next month are bad dates and are
+    ignored.
+    """
+    limit = shift_month(now_month, 1)
+    first = {m: n for m, n in first_counts.items() if valid_month(m) and m <= limit}
+    last = {m: n for m, n in last_counts.items() if valid_month(m) and m <= limit}
+    rows = {m: [None, n] for m, n in first.items()}
+    if last:
+        latest = max(last)
+        months = [latest]
+        previous = shift_month(latest, -1)
+        if (saved.get(previous) or {}).get("players") is not None:
+            months.append(previous)
+        for month in months:
+            rows.setdefault(month, [None, None])[0] = last.get(month, 0)
+    return sorted((month, players, new) for month, (players, new) in rows.items())
+
+
+def format_count(value):
+    return "–" if value is None else f"{int(value):,}"
+
+
+def format_player_months(saved, limit=6):
+    """(table, footnote) for the latest recorded months, newest first; None before any are saved."""
+    months = sorted((m for m in saved if valid_month(m)), reverse=True)[:limit]
+    if not months:
+        return None
+    lines = [f"{'MONTH':<9} {'PLAYERS':>8} {'NEW':>7}"]
+    for month in months:
+        row = saved[month]
+        label = datetime(int(month[:4]), int(month[5:]), 1).strftime("%b %Y")
+        lines.append(f"{label:<9} {format_count(row.get('players')):>8} {format_count(row.get('new_players')):>7}")
+    counted = [m for m in saved if valid_month(m) and saved[m].get("players") is not None]
+    since = datetime(int(min(counted)[:4]), int(min(counted)[5:]), 1).strftime("%b %Y") if counted else None
+    note = "Players: different players who played that month" + (f", counted since {since}" if since else "")
+    return "\n".join(lines), note + ". New: first game this season."
+
+
 def format_hours(seconds):
     hours = (seconds or 0) / 3600
     if hours == 0:

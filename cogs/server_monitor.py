@@ -20,7 +20,7 @@ from utils.constants import (
 )
 from utils.activity import (
     PERIOD_OPTIONS, AdminTracker, admin_rows, build_series, day_key, format_admin_table,
-    period_for, render_activity_graph, zone_label,
+    format_player_months, month_key, month_readings, period_for, render_activity_graph, zone_label,
 )
 from utils.embeds import make_embed
 from utils.server_management import log_code_block
@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 SERVER_KEY = f"{SERVER_ADDRESS[0]}:{SERVER_ADDRESS[1]}"
 PERIOD_SELECT_ID = "activity_graph:period"
 PERIOD_KEYS = {key for key, _ in PERIOD_OPTIONS}
+PLAYER_MONTHS_SECONDS = 600  # how often the rank table is counted for players per month
 
 
 class ServerMonitor(commands.Cog):
@@ -51,6 +52,7 @@ class ServerMonitor(commands.Cog):
         self.admin_tracker = AdminTracker(max_gap=SERVER_POLL_SECONDS * 2 + 10)
         self.last_activity_post = None
         self.last_prune = None
+        self.last_player_months = None
         self.graph_period = "24h"
         self.period_view = None
 
@@ -81,6 +83,7 @@ class ServerMonitor(commands.Cog):
             raise ValueError("ADMIN_FLAG must be a single lowercase AMX Mod X flag letter")
         await self.bot.db_bot.ensure_server_monitor_schema()
         await self.bot.db_bot.ensure_activity_schema()
+        await self.bot.db_bot.ensure_player_months_schema()
         # Keep the graph's period dropdown working on messages posted before a restart.
         self.period_view = self.graph_view(self.graph_period)[0]
         self.bot.add_view(self.period_view)
@@ -264,6 +267,32 @@ class ServerMonitor(commands.Cog):
         self.last_prune = now
         await self.bot.db_bot.prune_activity_samples(SERVER_KEY, wall - ACTIVITY_HISTORY_DAYS * 86400)
 
+    async def record_player_months(self, wall, now):
+        if self.last_player_months is not None and now - self.last_player_months < PLAYER_MONTHS_SECONDS:
+            return
+        self.last_player_months = now
+        first = await self.bot.db_live.count_players_by_month("First Login")
+        last = await self.bot.db_live.count_players_by_month("Last Login")
+        saved = await self.bot.db_bot.get_player_months(SERVER_KEY)
+        rows = month_readings(first, last, saved, month_key(wall, ACTIVITY_UTC_OFFSET))
+        await self.bot.db_bot.save_player_months(SERVER_KEY, rows)
+
+    async def player_months_text(self):
+        """The players-per-month table for the graph card, or None before anything is saved."""
+        table = format_player_months(await self.bot.db_bot.get_player_months(SERVER_KEY))
+        if table is None:
+            return None
+        rows, note = table
+        return f"**Players per month**\n{log_code_block(rows)}\n-# {note}"
+
+    async def safe_player_months_text(self):
+        """Same, but a database hiccup only drops the table, never the graph."""
+        try:
+            return await self.player_months_text()
+        except Exception:
+            logger.exception("Could not read players per month")
+            return None
+
     # ---------------- activity output ----------------
     async def activity_png(self, key):
         end = time.time()
@@ -276,8 +305,8 @@ class ServerMonitor(commands.Cog):
                                       ACTIVITY_UTC_OFFSET, first_ts=first)
         return png, period
 
-    def graph_view(self, key, period=None):
-        """The graph card: the image plus a dropdown to change its time span."""
+    def graph_view(self, key, period=None, months_text=None):
+        """The graph card: the image, a dropdown to change its time span, and players per month."""
         select = discord.ui.Select(
             custom_id=PERIOD_SELECT_ID, placeholder="Time span",
             options=[discord.SelectOption(label=label, value=value, default=value == key)
@@ -285,12 +314,15 @@ class ServerMonitor(commands.Cog):
         )
         select.callback = self.on_period_selected
         description = f"DD2 players, {period.label.lower()}: average and peak." if period else "DD2 players"
-        view = discord.ui.LayoutView(timeout=None)
-        view.add_item(discord.ui.Container(
+        items = [
             discord.ui.MediaGallery(discord.MediaGalleryItem("attachment://dd2-activity.png",
                                                              description=description)),
             discord.ui.ActionRow(select),
-        ))
+        ]
+        if months_text:
+            items += [discord.ui.Separator(), discord.ui.TextDisplay(months_text)]
+        view = discord.ui.LayoutView(timeout=None)
+        view.add_item(discord.ui.Container(*items))
         return view, description
 
     def graph_file(self, png, description):
@@ -309,7 +341,7 @@ class ServerMonitor(commands.Cog):
             await interaction.followup.send("Couldn't draw that graph. Try again shortly.", ephemeral=True)
             return
         self.graph_period = key  # the 10-minute refresh keeps the chosen span
-        view, description = self.graph_view(key, period)
+        view, description = self.graph_view(key, period, await self.safe_player_months_text())
         file = self.graph_file(png, description)
         try:
             await interaction.edit_original_response(attachments=[file], view=view)
@@ -368,7 +400,7 @@ class ServerMonitor(commands.Cog):
 
     async def post_activity_graph(self):
         png, period = await self.activity_png(self.graph_period)
-        view, description = self.graph_view(self.graph_period, period)
+        view, description = self.graph_view(self.graph_period, period, await self.safe_player_months_text())
         file = self.graph_file(png, description)
         try:
             await self.upsert_message("activity_graph", self.staff_channel(), view=view, file=file)
@@ -389,7 +421,8 @@ class ServerMonitor(commands.Cog):
         key = period.value if period else "24h"
         await interaction.response.defer(ephemeral=True)
         png, _ = await self.activity_png(key)
-        await interaction.followup.send(file=discord.File(BytesIO(png), filename=f"dd2-activity-{key}.png"),
+        await interaction.followup.send(content=await self.safe_player_months_text(),
+                                        file=discord.File(BytesIO(png), filename=f"dd2-activity-{key}.png"),
                                         ephemeral=True)
 
     @app_commands.command(name="admin-activity", description="[Admin] Hours each admin has spent on the DD2 server")
@@ -415,7 +448,7 @@ class ServerMonitor(commands.Cog):
             now = time.monotonic()
             wall = time.time()
             for step in (self.record_players(info, wall), self.record_admins(info, wall, now),
-                         self.prune_samples(wall, now)):
+                         self.prune_samples(wall, now), self.record_player_months(wall, now)):
                 try:
                     await step
                 except Exception:
