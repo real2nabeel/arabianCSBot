@@ -435,6 +435,60 @@ class Database:
             "season_seconds": int(row["Played Time"] or 0),
         } for row in rows if flag in (row["Flags"] or "")]
 
+    async def count_players_by_month(self, column):
+        """Real players per calendar month of ``First Login`` or ``Last Login``.
+
+        The rank plugin stores both as text, "MM/DD/YYYY - HH:MM:SS", in the
+        game server's local time; months come back as "YYYY-MM". Bots, HLTV
+        and players without a real ID are left out.
+        """
+        if column not in {"First Login", "Last Login"}:
+            raise ValueError("Unknown login column")
+        month = f"CONCAT(SUBSTRING(`{column}`, 7, 4), '-', SUBSTRING(`{column}`, 1, 2))"
+        rows = await self.fetch_all(
+            f"SELECT {month} AS month, COUNT(*) AS players FROM rank_system "
+            f"WHERE `{column}` REGEXP '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{4}}' "
+            "AND `Player` NOT LIKE %s AND `Player` NOT LIKE %s AND `Player` NOT LIKE %s "
+            "GROUP BY month",
+            ("BOT%", "HLTV%", "STEAM\\_ID%"),
+        )
+        return {row["month"]: int(row["players"]) for row in rows}
+
+    # ------------------------------------------------------------------ #
+    # Players per month (bot schema)
+    # ------------------------------------------------------------------ #
+    async def ensure_player_months_schema(self):
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS player_months ("
+            "server_key VARCHAR(255) NOT NULL, month CHAR(7) NOT NULL, "
+            "players INT UNSIGNED NULL, new_players INT UNSIGNED NULL, "
+            "PRIMARY KEY (server_key, month)) CHARACTER SET utf8mb4"
+        )
+
+    async def save_player_months(self, server_key, rows):
+        """``rows``: (month, players or None, new_players or None).
+
+        Counts only ever go up: a later, smaller reading (a player's Last Login
+        moving into the next month, or a season reset) never lowers a month.
+        """
+        for month, players, new_players in rows:
+            await self.execute(
+                "INSERT INTO player_months (server_key, month, players, new_players) VALUES (%s,%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE "
+                "players=GREATEST(COALESCE(players, VALUES(players)), COALESCE(VALUES(players), players)), "
+                "new_players=GREATEST(COALESCE(new_players, VALUES(new_players)), "
+                "COALESCE(VALUES(new_players), new_players))",
+                (server_key, month, players, new_players),
+            )
+
+    async def get_player_months(self, server_key):
+        """month -> {"players", "new_players"} for every recorded month."""
+        rows = await self.fetch_all(
+            "SELECT month, players, new_players FROM player_months WHERE server_key=%s",
+            (server_key,),
+        )
+        return {row["month"]: row for row in rows}
+
     async def close(self):
         if self.pool is not None:
             self.pool.close()
