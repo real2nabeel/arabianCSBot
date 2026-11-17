@@ -127,6 +127,8 @@ ACTIVITY_UTC_OFFSET = _int_env("ACTIVITY_UTC_OFFSET", 3)
 # platform, CLIPS_POST_GAP_MINUTES apart, between CLIPS_POST_HOURS (server time, ACTIVITY_UTC_OFFSET).
 # A blank channel turns the whole feature off.
 CLIPS_DIR = os.getenv("CLIPS_DIR", "/clips")
+# Shared with the host job: /clips-run writes request.json there, the job writes status.json back.
+CLIPS_CONTROL_DIR = os.getenv("CLIPS_CONTROL_DIR", "/clips-control")
 CLIPS_REVIEW_CHANNEL_ID = _int_env("CLIPS_REVIEW_CHANNEL_ID")
 CLIPS_APPROVER_ROLE_IDS = _id_list_env("CLIPS_APPROVER_ROLE_IDS")
 CLIPS_PLATFORMS = [p.strip().lower() for p in os.getenv("CLIPS_PLATFORMS", "facebook,instagram").split(",") if p.strip()]

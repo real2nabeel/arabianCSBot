@@ -9,6 +9,9 @@ The host-side job (clips/nightly.py) writes finished clips into CLIPS_DIR/<clip 
 
 Only 👍/❌ from members with a role in CLIPS_APPROVER_ROLE_IDS (or Administrator) count; a ❌ wins. A blank
 CLIPS_REVIEW_CHANNEL_ID turns the cog off.
+
+/clips-run (approvers only) starts the host job: it writes CLIPS_CONTROL_DIR/request.json, cron on the host picks
+it up within a minute, and the job's CLIPS_CONTROL_DIR/status.json is reported in the review channel when done.
 """
 import asyncio
 import datetime as dt
@@ -22,7 +25,8 @@ from discord.ext import commands, tasks
 from utils import clips as logic
 from utils import social
 from utils.constants import (
-    ACTIVITY_UTC_OFFSET, CLIPS_APPROVER_ROLE_IDS, CLIPS_CAPTION, CLIPS_CHECK_MINUTES, CLIPS_DIR, CLIPS_HASHTAGS,
+    ACTIVITY_UTC_OFFSET, CLIPS_APPROVER_ROLE_IDS, CLIPS_CAPTION, CLIPS_CHECK_MINUTES, CLIPS_CONTROL_DIR, CLIPS_DIR,
+    CLIPS_HASHTAGS,
     CLIPS_PLATFORMS, CLIPS_POST_GAP_MINUTES, CLIPS_POST_HOURS, CLIPS_POSTS_PER_DAY, CLIPS_REVIEW_CHANNEL_ID,
     CLIPS_SERVER_ADDRESS, GUILD_ID, META_GRAPH_VERSION, META_IG_ID, META_PAGE_ID, META_TOKEN, TIKTOK_CLIENT_FILE,
     TIKTOK_MODE, TIKTOK_TOKEN_FILE, YOUTUBE_PRIVACY, YOUTUBE_TOKEN_FILE,
@@ -38,6 +42,7 @@ class Clips(commands.Cog):
         self.bot = bot
         self.hours = logic.parse_hours(CLIPS_POST_HOURS)
         self.uploaders = {}
+        self.post_lock = asyncio.Lock()   # both loops post new clips; never post one twice
 
     async def cog_load(self):
         if not CLIPS_REVIEW_CHANNEL_ID:
@@ -66,9 +71,11 @@ class Clips(commands.Cog):
         await self.bot.db_bot.ensure_clips_schema()
         self.check.change_interval(minutes=max(1, CLIPS_CHECK_MINUTES))
         self.check.start()
+        self.watch_runs.start()
 
     def cog_unload(self):
         self.check.cancel()
+        self.watch_runs.cancel()
 
     # ------------------------------------------------------------------ #
     # Loop
@@ -126,6 +133,10 @@ class Clips(commands.Cog):
         return embed
 
     async def post_new_clips(self):
+        async with self.post_lock:
+            await self._post_new_clips()
+
+    async def _post_new_clips(self):
         ready = await asyncio.get_running_loop().run_in_executor(None, self._ready_clips)
         if not ready:
             return
@@ -229,6 +240,85 @@ class Clips(commands.Cog):
             await self.bot.db_bot.set_clip_status(clip["clip_id"], status, payload.user_id if status != "pending" else None)
             posts = await self.bot.db_bot.get_clip_posts(clip_id=clip["clip_id"])
             await msg.edit(embed=self._embed(json.loads(clip["meta"]), status, posts))
+
+    # ------------------------------------------------------------------ #
+    # On-demand runs (/clips-run)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _control(name):
+        return os.path.join(CLIPS_CONTROL_DIR, name)
+
+    @staticmethod
+    def _read_json(path):
+        try:
+            with open(path, encoding="utf8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return None
+
+    @staticmethod
+    def _write_json(path, data):
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+
+    @app_commands.command(name="clips-run", description="Make clips from the latest highlights now")
+    @app_commands.default_permissions(manage_messages=True)
+    async def clips_run(self, interaction: discord.Interaction):
+        if not CLIPS_REVIEW_CHANNEL_ID:
+            await interaction.response.send_message("Clips are turned off.", ephemeral=True)
+            return
+        if not self._is_approver(interaction.user if isinstance(interaction.user, discord.Member) else None):
+            await interaction.response.send_message("Only clip reviewers can start a clip run.", ephemeral=True)
+            return
+        loop = asyncio.get_running_loop()
+        if not os.path.isdir(CLIPS_CONTROL_DIR):
+            await interaction.response.send_message("The clip machine isn't connected (no control folder).",
+                                                    ephemeral=True)
+            return
+        if os.path.exists(self._control("request.json")):
+            await interaction.response.send_message("A clip run is already queued; it starts within a minute.",
+                                                    ephemeral=True)
+            return
+        status = await loop.run_in_executor(None, self._read_json, self._control("status.json")) or {}
+        started = status.get("started", "")
+        try:
+            stale = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(started) > dt.timedelta(hours=3)
+        except (ValueError, TypeError):
+            stale = True   # a run killed half-way would otherwise block /clips-run forever
+        if status.get("state") == "running" and not stale:
+            await interaction.response.send_message("A clip run is already going. Its result will be posted in "
+                                                    f"<#{CLIPS_REVIEW_CHANNEL_ID}>.", ephemeral=True)
+            return
+        request = {"requested_by": interaction.user.id, "requested_by_name": interaction.user.display_name,
+                   "at": dt.datetime.utcnow().isoformat(timespec="seconds")}
+        await loop.run_in_executor(None, self._write_json, self._control("request.json"), request)
+        await interaction.response.send_message(
+            "Clip run queued: it starts within a minute and takes about a minute per clip. New clips and the result "
+            f"will be posted in <#{CLIPS_REVIEW_CHANNEL_ID}>. Make sure nobody is playing on the Steam account.",
+            ephemeral=True)
+
+    @tasks.loop(seconds=30)
+    async def watch_runs(self):
+        loop = asyncio.get_running_loop()
+        status = await loop.run_in_executor(None, self._read_json, self._control("status.json"))
+        if not status or status.get("reported") or status.get("state") == "running":
+            return
+        text = logic.run_report(status)
+        status["reported"] = True
+        await loop.run_in_executor(None, self._write_json, self._control("status.json"), status)
+        try:
+            await self.post_new_clips()   # show the new clips before the summary
+        except Exception as e:
+            print(f"[clips] posting new clips failed: {type(e).__name__}: {e}")
+        if text:
+            channel = await self._channel()
+            await channel.send(text, allowed_mentions=discord.AllowedMentions.none())
+
+    @watch_runs.before_loop
+    async def before_watch(self):
+        await self.bot.wait_until_ready()
 
     # ------------------------------------------------------------------ #
     # Status command
