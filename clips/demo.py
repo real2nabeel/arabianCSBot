@@ -23,7 +23,9 @@ grenade shake and the hit indicator show in the clip.
 
 ``follow`` also adds a console-only time marker ("[clipsync] <demo seconds>", a TextMsg to the console) every half
 second up to the clip's start. CS prints them to its console log while it plays the copy, so the renderer can see
-exactly where the playback is instead of guessing from how many frames it has run.
+exactly where the playback is instead of guessing from how many frames it has run. It can also put console
+commands into the copy at a given demo time (svc_stufftext, which demo playback runs): the renderer uses that to drop
+from fast-forward to normal speed just before the moment, at exactly the right point.
 """
 import re
 import struct
@@ -34,6 +36,7 @@ FRAME_INFO_LEN = 436 + 28                      # demo info + sequence info befor
 
 SVC_WEAPONANIM = 35
 SVC_DIRECTOR = 51
+SVC_STUFFTEXT = 9
 DRC_CMD_EVENT = 2
 DRC_CMD_MODE = 3
 OBS_IN_EYE = 4
@@ -203,10 +206,10 @@ def console_text(table, text):
     return bytes([msg_id, len(payload)]) + payload if size == 255 else b""
 
 
-def follow(src, dst, entity, t0, t1, sync_until=None):
+def follow(src, dst, entity, t0, t1, sync_until=None, commands=None):
     """Copy ``src`` to ``dst`` with the camera following ``entity`` in first person from t0 to t1 (demo seconds),
-    with a time marker every SYNC_EVERY seconds before ``sync_until`` (see the module notes).
-    Returns the number of frames changed."""
+    with a time marker every SYNC_EVERY seconds before ``sync_until``, and ``commands`` = (t, "cmd;cmd") run by the
+    game when playback reaches demo time t (see the module notes). Returns the number of frames changed."""
     d = open(src, "rb").read()
     diroff, = struct.unpack_from("<i", d, HEADER_LEN - 4)
     extra = _director(entity)
@@ -224,6 +227,9 @@ def follow(src, dst, entity, t0, t1, sync_until=None):
         new_offset = len(out)
         for fs, fe, t, msg in _frames(d, offset, offset + length):
             add = b""
+            if msg is not None and commands is not None and t >= commands[0]:
+                add += bytes([SVC_STUFFTEXT]) + commands[1].encode("latin1") + b"\n\x00"
+                commands = None
             if (msg is not None and sync_until is not None and next_sync <= t < sync_until
                     and registered != -1 and fs > registered):
                 add += console_text(table, f"[clipsync] {t:.2f}")

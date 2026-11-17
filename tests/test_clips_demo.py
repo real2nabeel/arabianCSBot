@@ -80,6 +80,9 @@ class TestSyncMarkers(unittest.TestCase):
             # none in the frame that registers TextMsg, then every half second until the moment
             self.assertEqual(marks, [0.25, 0.75, 1.25, 1.75])
             self.assertEqual(demo.SYNC_RE.findall("x[clipsync] 1.50y"), ["1.50"])
+            demo.follow(src, dst, entity=3, t0=10, t1=11, commands=(1.0, "host_framerate 0;echo ==SLOW=="))
+            out = open(dst, "rb").read()
+            self.assertEqual(out.count(b"\x09host_framerate 0;echo ==SLOW==\n\x00"), 1)
             # still a readable demo with the same frames
             self.assertEqual([round(t, 2) for _, _, t, m in demo._frames(out, demo.HEADER_LEN, len(out)) if m],
                              times)
