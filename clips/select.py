@@ -9,6 +9,7 @@ PRE_ROLL = 3.0        # seconds shown before the first kill
 POST_ROLL = 2.5       # seconds shown after the last kill
 CLUTCH_TAIL = 8.0     # a clutch can end with a defuse a few seconds after the last kill
 MAX_LENGTH = 40.0     # longest clip; a long clutch is trimmed from the start
+MIN_LENGTH = 5.0      # anything shorter isn't worth a clip
 
 WEAPON_NAMES = {
     "ak47": "AK-47", "m4a1": "M4A1", "awp": "AWP", "scout": "Scout", "deagle": "Deagle", "usp": "USP",
@@ -85,7 +86,11 @@ def plan(moments, demos, top=8, min_score=30):
             span = locate(m, info["marks"])
             if span is None or info.get("map") not in (None, "", m.get("map")):
                 continue
+            if span[0] < 0:
+                break   # the moment began before this demo did (HLTV joined mid-round): it wasn't all recorded
             start, end = window(m, span[0], span[1], info["kills"])
+            if end - start < MIN_LENGTH:
+                break
             found.append({"demo": path, "map": m.get("map", info.get("map", "")), "entity": m["entity"],
                           "player": m["player"], "team": m.get("team", ""), "start": start, "end": end,
                           "score": m["score"], "moments": [m]})

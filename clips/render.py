@@ -20,6 +20,8 @@ SINK = os.environ.get("CLIPS_SINK", "clips")
 VOLUME = os.environ.get("CLIPS_VOLUME", "0.5")
 STEP = 0.25            # demo seconds per frame while fast-forwarding (the screen is capped at 60 frames a second)
 DEMO_NAME = "clipsrender"
+# Debian puts Steam in /usr/games, which cron's minimal PATH leaves out.
+STEAM = os.environ.get("CLIPS_STEAM") or shutil.which("steam") or "/usr/games/steam"
 
 
 class SteamBusy(Exception):
@@ -48,6 +50,12 @@ def ensure_audio():
     _run("pactl", "set-default-sink", SINK)
     if "module-suspend-on-idle" in _run("pactl", "list", "short", "modules").stdout:
         _run("pactl", "unload-module", "module-suspend-on-idle")
+    # Pin the sound server so Steam, CS (started via tmux, which can carry another environment) and ffmpeg all
+    # use the same one; otherwise CS can play into one server while ffmpeg records silence from another.
+    for line in _run("pactl", "info").stdout.splitlines():
+        if line.startswith("Server String:"):
+            server = line.split(":", 1)[1].strip()
+            os.environ["PULSE_SERVER"] = server if ":" in server else f"unix:{server}"
 
 
 def ensure_display():
@@ -64,13 +72,14 @@ def start_steam(wait=90):
         return
     _run("tmux", "kill-session", "-t", "steam")
     log = os.path.expanduser("~/clips/steam.log")
-    _run("tmux", "new-session", "-d", "-s", "steam", f"export DISPLAY={DISPLAY} PULSE_SINK={SINK}; steam > {log} 2>&1")
+    _run("tmux", "new-session", "-d", "-s", "steam", f"export DISPLAY={DISPLAY} PULSE_SINK={SINK} PULSE_SERVER='{os.environ.get('PULSE_SERVER', '')}'; "
+         f"{STEAM} > {log} 2>&1")
     time.sleep(wait)
 
 
 def stop_steam():
     if steam_running():
-        _run("steam", "-shutdown")
+        _run(STEAM, "-shutdown")
         time.sleep(15)
     _run("tmux", "kill-session", "-t", "steam")
 
@@ -128,7 +137,7 @@ def record(demo_path, start, length, out_mkv, start_timeout=120):
         os.remove(console)
     _run("pkill", "-x", "hl_linux")
     log_offset = _log_size()
-    subprocess.Popen(["steam", "-applaunch", "10", "-windowed", "-noborder", "-w", "1920", "-h", "1080", "-novid",
+    subprocess.Popen([STEAM, "-applaunch", "10", "-windowed", "-noborder", "-w", "1920", "-h", "1080", "-novid",
                       "-nojoy", "-condebug", "+exec", "clipfind.cfg"],
                      env=_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     began = time.time()
