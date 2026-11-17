@@ -119,3 +119,38 @@ ADMIN_FLAG = os.getenv("ADMIN_FLAG", "c").strip() or "c"
 ACTIVITY_REFRESH_SECONDS = _int_env("ACTIVITY_REFRESH_SECONDS", 600)
 ACTIVITY_HISTORY_DAYS = _int_env("ACTIVITY_HISTORY_DAYS", 30)
 ACTIVITY_UTC_OFFSET = _int_env("ACTIVITY_UTC_OFFSET", 3)
+
+# --- Highlight clips (cogs/clips.py) ---------------------------------------- #
+# The host-side job (clips/nightly.py) writes finished clips into CLIPS_DIR (mounted into the container); each
+# is posted to CLIPS_REVIEW_CHANNEL_ID. A 👍 from a member with one of CLIPS_APPROVER_ROLE_IDS (or Administrator)
+# approves it, ❌ rejects it. Approved clips are posted to CLIPS_PLATFORMS, at most CLIPS_POSTS_PER_DAY per
+# platform, CLIPS_POST_GAP_MINUTES apart, between CLIPS_POST_HOURS (server time, ACTIVITY_UTC_OFFSET).
+# A blank channel turns the whole feature off.
+CLIPS_DIR = os.getenv("CLIPS_DIR", "/clips")
+CLIPS_REVIEW_CHANNEL_ID = _int_env("CLIPS_REVIEW_CHANNEL_ID")
+CLIPS_APPROVER_ROLE_IDS = _id_list_env("CLIPS_APPROVER_ROLE_IDS")
+CLIPS_PLATFORMS = [p.strip().lower() for p in os.getenv("CLIPS_PLATFORMS", "facebook,instagram").split(",") if p.strip()]
+CLIPS_POSTS_PER_DAY = _int_env("CLIPS_POSTS_PER_DAY", 2)
+CLIPS_POST_GAP_MINUTES = _int_env("CLIPS_POST_GAP_MINUTES", 240)
+CLIPS_POST_HOURS = os.getenv("CLIPS_POST_HOURS", "12-23").strip()
+CLIPS_CHECK_MINUTES = _int_env("CLIPS_CHECK_MINUTES", 10)
+CLIPS_CAPTION = os.getenv(
+    "CLIPS_CAPTION", "🔥 {player} – {summary} on {map}\n🎮 Play with us: connect {server}\n\n{hashtags}"
+).replace("\n", "\n")
+CLIPS_HASHTAGS = os.getenv(
+    "CLIPS_HASHTAGS",
+    "#CounterStrike #CS16 #CounterStrike16 #dust2 #FPS #Gaming #ArabGamers #ArabianServers #كاونتر_سترايك",
+).strip()
+CLIPS_SERVER_ADDRESS = os.getenv("CLIPS_SERVER_ADDRESS", "").strip() or f"{SERVER_ADDRESS[0]}:{SERVER_ADDRESS[1]}"
+
+# Platform credentials. Meta: a never-expiring system-user token with the Page and Instagram account assigned.
+META_TOKEN = os.getenv("META_TOKEN", "").strip()
+META_PAGE_ID = os.getenv("META_PAGE_ID", "").strip()
+META_IG_ID = os.getenv("META_IG_ID", "").strip()
+META_GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v23.0").strip()
+# YouTube and TikTok keep refreshable tokens in JSON files (mounted read-write so refreshed tokens are saved).
+YOUTUBE_TOKEN_FILE = os.getenv("YOUTUBE_TOKEN_FILE", "/clips-secrets/youtube_token.json")
+YOUTUBE_PRIVACY = os.getenv("YOUTUBE_PRIVACY", "private").strip()   # an unaudited Google app can only post private
+TIKTOK_TOKEN_FILE = os.getenv("TIKTOK_TOKEN_FILE", "/clips-secrets/tiktok_token.json")
+TIKTOK_CLIENT_FILE = os.getenv("TIKTOK_CLIENT_FILE", "/clips-secrets/tiktok_client")
+TIKTOK_MODE = os.getenv("TIKTOK_MODE", "inbox").strip()            # inbox = to the app's drafts; direct needs an audit

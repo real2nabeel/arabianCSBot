@@ -489,6 +489,75 @@ class Database:
         )
         return {row["month"]: row for row in rows}
 
+    # ------------------------------------------------------------------ #
+    # Highlight clips (bot schema)
+    # ------------------------------------------------------------------ #
+    async def ensure_clips_schema(self):
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS clips ("
+            "clip_id VARCHAR(80) NOT NULL PRIMARY KEY, created_at DATETIME NOT NULL, meta MEDIUMTEXT NOT NULL, "
+            "status VARCHAR(10) NOT NULL DEFAULT 'pending', channel_id BIGINT UNSIGNED NULL, "
+            "message_id BIGINT UNSIGNED NULL, decided_by BIGINT UNSIGNED NULL, decided_at DATETIME NULL, "
+            "INDEX (message_id), INDEX (status)) CHARACTER SET utf8mb4"
+        )
+        await self.execute(
+            "CREATE TABLE IF NOT EXISTS clip_posts ("
+            "clip_id VARCHAR(80) NOT NULL, platform VARCHAR(16) NOT NULL, status VARCHAR(10) NOT NULL, "
+            "external_id VARCHAR(128) NULL, url VARCHAR(512) NULL, attempts INT UNSIGNED NOT NULL DEFAULT 0, "
+            "last_error VARCHAR(500) NULL, posted_at DATETIME NULL, "
+            "PRIMARY KEY (clip_id, platform)) CHARACTER SET utf8mb4"
+        )
+
+    async def get_clip_ids(self):
+        rows = await self.fetch_all("SELECT clip_id FROM clips")
+        return {row["clip_id"] for row in rows}
+
+    async def add_clip(self, clip_id, meta_json, channel_id, message_id):
+        """Times are stored in UTC."""
+        await self.execute(
+            "INSERT INTO clips (clip_id, created_at, meta, channel_id, message_id) VALUES (%s, UTC_TIMESTAMP(), %s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE meta=VALUES(meta), channel_id=VALUES(channel_id), message_id=VALUES(message_id)",
+            (clip_id, meta_json, channel_id, message_id),
+        )
+
+    async def get_clip(self, clip_id):
+        return await self.fetch_one("SELECT * FROM clips WHERE clip_id=%s", (clip_id,))
+
+    async def get_clip_by_message(self, message_id):
+        return await self.fetch_one("SELECT * FROM clips WHERE message_id=%s", (message_id,))
+
+    async def set_clip_status(self, clip_id, status, user_id):
+        await self.execute(
+            "UPDATE clips SET status=%s, decided_by=%s, decided_at=IF(%s='pending', NULL, UTC_TIMESTAMP()) "
+            "WHERE clip_id=%s",
+            (status, user_id, status, clip_id),
+        )
+
+    async def get_approved_clips(self):
+        return await self.fetch_all(
+            "SELECT clip_id, decided_at, meta, channel_id, message_id FROM clips WHERE status='approved'"
+        )
+
+    async def get_clip_posts(self, platform=None, clip_id=None):
+        query, args = "SELECT * FROM clip_posts WHERE 1=1", []
+        if platform:
+            query += " AND platform=%s"
+            args.append(platform)
+        if clip_id:
+            query += " AND clip_id=%s"
+            args.append(clip_id)
+        return await self.fetch_all(query, tuple(args))
+
+    async def record_clip_post(self, clip_id, platform, status, external_id=None, url=None, error=None):
+        await self.execute(
+            "INSERT INTO clip_posts (clip_id, platform, status, external_id, url, attempts, last_error, posted_at) "
+            "VALUES (%s,%s,%s,%s,%s,1,%s,IF(%s='posted', UTC_TIMESTAMP(), NULL)) "
+            "ON DUPLICATE KEY UPDATE status=VALUES(status), external_id=COALESCE(VALUES(external_id), external_id), "
+            "url=COALESCE(VALUES(url), url), attempts=attempts+1, last_error=VALUES(last_error), "
+            "posted_at=COALESCE(VALUES(posted_at), posted_at)",
+            (clip_id, platform, status, external_id, url, (error or "")[:500] or None, status),
+        )
+
     async def close(self):
         if self.pool is not None:
             self.pool.close()

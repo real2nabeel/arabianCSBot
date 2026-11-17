@@ -12,6 +12,11 @@ services:
     # this mapping makes the same hostname work.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Highlight clips (cogs/clips.py): the host-side job (clips/nightly.py) writes finished clips here, and the
+    # YouTube/TikTok token files live in the secrets folder (read-write: refreshed tokens are saved back).
+    volumes:
+      - ${CLIPS_HOST_DIR:-./clips_out}:/clips:ro
+      - ${CLIPS_SECRETS_DIR:-./clips_secrets}:/clips-secrets
     logging:
       driver: json-file
       options:
