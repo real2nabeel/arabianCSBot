@@ -47,6 +47,10 @@ _MSG = re.compile(rb"\[clips\] msg t=[0-9.]+ p=(\d+) n=(\w+) a=([-0-9.:,]*)")
 # One-player messages the plugin copies to HLTV: scope zoom, flashbang, grenade shake, hit indicator.
 PERSONAL_MSGS = ("SetFOV", "ScreenFade", "ScreenShake", "Damage")
 SYNC_EVERY = 0.5          # demo seconds between time markers
+# Replayed weapon animations go in this much later than their line. Watching in first person, CS takes the view model
+# from the player's weapon and restarts its animation (idle) when that model changes, after the frame's messages: a
+# draw animation sent in the same frame as the weapon switch was wiped out before it showed.
+ANIM_DELAY = 0.05
 SYNC_RE = re.compile(r"\[clipsync\] ([0-9.]+)")
 HUD_PRINTCONSOLE = 2
 
@@ -217,6 +221,7 @@ def follow(src, dst, entity, t0, t1, sync_until=None, commands=None):
     out = bytearray(d[:HEADER_LEN])
     entries, changed, seen = [], 0, set()
     next_sync = 0.0
+    pending = []   # (demo time due, weapon animation message)
     # Markers only after the game has learnt the TextMsg number (an unknown user message would stop the demo).
     key = b"TextMsg\x00"
     registered = d.find(key)
@@ -242,7 +247,10 @@ def follow(src, dst, entity, t0, t1, sync_until=None, commands=None):
                     for m in _ANIM.finditer(body):
                         if int(m.group(1)) == entity and m.group(0) not in seen:   # HLTV can repeat a line
                             seen.add(m.group(0))
-                            add += bytes([SVC_WEAPONANIM, int(m.group(2)) & 0xFF, int(m.group(3)) & 0xFF])
+                            pending.append((t + ANIM_DELAY,
+                                            bytes([SVC_WEAPONANIM, int(m.group(2)) & 0xFF, int(m.group(3)) & 0xFF])))
+                while pending and pending[0][0] <= t:
+                    add += pending.pop(0)[1]
                 if b"[clips] msg" in body:
                     for m in _MSG.finditer(body):
                         if int(m.group(1)) == entity and m.group(0) not in seen:
