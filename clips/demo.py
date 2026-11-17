@@ -13,6 +13,13 @@ frames carry the raw server messages, which is where the clip_highlights plugin'
 camera follow one player in first person during a time window (it appends HLTV director messages to every frame in
 the window; the game obeys them because spec_autodirector is on by default), and turns that player's anim lines
 into real weapon animation messages, so switching, reloading and knife attacks animate.
+
+  [clips] msg t=.. p=<slot> n=<name> a=<type>:<value>,...   a message the game sent to that player only
+                                                            (SetFOV, ScreenFade, ScreenShake, Damage)
+
+``follow`` rebuilds the followed player's messages byte for byte (AMX Mod X argument types, encoded the way the
+engine writes them) using the message numbers from the demo's own svc_newusermsg table, so scope zoom, flashbangs,
+grenade shake and the hit indicator show in the clip.
 """
 import re
 import struct
@@ -29,6 +36,9 @@ OBS_IN_EYE = 4
 
 _LINE = re.compile(rb"\[clips\] (mark|round|kill) ([^\x00\n]*)")
 _ANIM = re.compile(rb"\[clips\] anim t=[0-9.]+ p=(\d+) a=(\d+) b=(\d+)")
+_MSG = re.compile(rb"\[clips\] msg t=[0-9.]+ p=(\d+) n=(\w+) a=([-0-9.:,]*)")
+# One-player messages the plugin copies to HLTV: scope zoom, flashbang, grenade shake, hit indicator.
+PERSONAL_MSGS = ("SetFOV", "ScreenFade", "ScreenShake", "Damage")
 
 
 class DemoError(Exception):
@@ -129,12 +139,61 @@ def _director(entity):
     return bytes([SVC_DIRECTOR, len(mode)]) + mode + bytes([SVC_DIRECTOR, len(event)]) + event
 
 
+SVC_NEWUSERMSG = 39
+
+
+def user_messages(d):
+    """{name: (id, size)} from the demo's svc_newusermsg table (size 255 = variable length)."""
+    out = {}
+    for name in PERSONAL_MSGS:
+        key = name.encode() + b"\x00"
+        pos = d.find(key)
+        while pos != -1:
+            if pos >= 3 and d[pos - 3] == SVC_NEWUSERMSG:
+                out[name] = (d[pos - 2], d[pos - 1])
+                break
+            pos = d.find(key, pos + 1)
+    return out
+
+
+def encode_args(text):
+    """"1:90,3:-2,6:12.5" (AMX Mod X type:value) -> the bytes the engine writes for those arguments."""
+    out = bytearray()
+    for item in filter(None, text.split(",")):
+        kind, _, value = item.partition(":")
+        kind = int(kind)
+        if kind in (1, 2):                       # byte, char
+            out += struct.pack("<B", int(value) & 0xFF)
+        elif kind in (3, 8):                     # short, entity
+            out += struct.pack("<H", int(value) & 0xFFFF)
+        elif kind == 4:                          # long
+            out += struct.pack("<I", int(value) & 0xFFFFFFFF)
+        elif kind == 5:                          # angle: 1/256ths of a turn
+            out += struct.pack("<B", int(float(value) * 256 / 360) & 0xFF)
+        elif kind == 6:                          # coord: 1/8ths of a unit
+            out += struct.pack("<H", int(float(value) * 8) & 0xFFFF)
+        else:
+            raise ValueError(f"unsupported argument type {kind}")
+    return bytes(out)
+
+
+def _user_message(table, name, args):
+    if name not in table:
+        return b""
+    msg_id, size = table[name]
+    payload = encode_args(args)
+    if size == 255:
+        return bytes([msg_id, len(payload)]) + payload
+    return bytes([msg_id]) + payload if len(payload) == size else b""
+
+
 def follow(src, dst, entity, t0, t1):
     """Copy ``src`` to ``dst`` with the camera following ``entity`` in first person from t0 to t1 (demo seconds).
     Returns the number of frames changed."""
     d = open(src, "rb").read()
     diroff, = struct.unpack_from("<i", d, HEADER_LEN - 4)
     extra = _director(entity)
+    table = user_messages(d)
     out = bytearray(d[:HEADER_LEN])
     entries, changed, seen = [], 0, set()
     for base, offset, length in _entries(d):
@@ -150,6 +209,11 @@ def follow(src, dst, entity, t0, t1):
                         if int(m.group(1)) == entity and m.group(0) not in seen:   # HLTV can repeat a line
                             seen.add(m.group(0))
                             add += bytes([SVC_WEAPONANIM, int(m.group(2)) & 0xFF, int(m.group(3)) & 0xFF])
+                if b"[clips] msg" in body:
+                    for m in _MSG.finditer(body):
+                        if int(m.group(1)) == entity and m.group(0) not in seen:
+                            seen.add(m.group(0))
+                            add += _user_message(table, m.group(2).decode(), m.group(3).decode())
                 out += d[fs:msg] + struct.pack("<i", mlen + len(add)) + d[msg + 4:fe] + add
                 changed += 1
             else:
