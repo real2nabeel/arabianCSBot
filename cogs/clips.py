@@ -10,7 +10,7 @@ The host-side job (clips/nightly.py) writes finished clips into CLIPS_DIR/<clip 
 Only 👍/❌ from members with a role in CLIPS_APPROVER_ROLE_IDS (or Administrator) count; a ❌ wins. A blank
 CLIPS_REVIEW_CHANNEL_ID turns the cog off.
 
-/clips-run (approvers only) starts the host job: it writes CLIPS_CONTROL_DIR/request.json, cron on the host picks
+/clips-run (approvers only) starts the host job, /clips-one does the same for just the best new clip: it writes CLIPS_CONTROL_DIR/request.json, cron on the host picks
 it up within a minute, and the job's CLIPS_CONTROL_DIR/status.json is reported in the review channel when done.
 """
 import asyncio
@@ -266,6 +266,15 @@ class Clips(commands.Cog):
     @app_commands.command(name="clips-run", description="Make clips from the latest highlights now")
     @app_commands.default_permissions(manage_messages=True)
     async def clips_run(self, interaction: discord.Interaction):
+        await self._queue_run(interaction, None)
+
+    @app_commands.command(name="clips-one", description="Make just the best new clip now (quicker)")
+    @app_commands.default_permissions(manage_messages=True)
+    async def clips_one(self, interaction: discord.Interaction):
+        await self._queue_run(interaction, 1)
+
+    async def _queue_run(self, interaction, limit):
+        """Leave a run request for the host job; ``limit`` caps the number of clips (None = the job's default)."""
         if not CLIPS_REVIEW_CHANNEL_ID:
             await interaction.response.send_message("Clips are turned off.", ephemeral=True)
             return
@@ -293,10 +302,13 @@ class Clips(commands.Cog):
             return
         request = {"requested_by": interaction.user.id, "requested_by_name": interaction.user.display_name,
                    "at": dt.datetime.utcnow().isoformat(timespec="seconds")}
+        if limit:
+            request["limit"] = limit
         await loop.run_in_executor(None, self._write_json, self._control("request.json"), request)
+        what = "Clip run for the best new clip" if limit == 1 else "Clip run"
         await interaction.response.send_message(
-            "Clip run queued: it starts within a minute and takes about a minute per clip. New clips and the result "
-            f"will be posted in <#{CLIPS_REVIEW_CHANNEL_ID}>. Make sure nobody is playing on the Steam account.",
+            f"{what} queued: it starts within a minute; each clip takes about 3–7 minutes to make. New clips and the "
+            f"result will be posted in <#{CLIPS_REVIEW_CHANNEL_ID}>. Make sure nobody is playing on the Steam account.",
             ephemeral=True)
 
     @tasks.loop(seconds=30)
