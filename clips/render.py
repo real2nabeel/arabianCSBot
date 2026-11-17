@@ -107,6 +107,9 @@ def write_config(start):
         fh.write("\n".join(lines) + "\n")
 
 
+# Console lines meaning the demo didn't load (e.g. a model the server uses that this CS doesn't have).
+FAILURE_MARKS = ("cannot continue without", "disconnecting", "couldn't open", "bad demo")
+
 STEAM_LOG = os.path.expanduser(os.environ.get("CLIPS_STEAM_LOG", "~/.steam/debian-installation/logs/console_log.txt"))
 BUSY_MARK = "KickingOtherSession"   # Steam logs this while it asks whether to kick the owner's other session
 
@@ -143,6 +146,11 @@ def record(demo_path, start, length, out_mkv, start_timeout=120):
     began = time.time()
     while True:
         text = open(console, errors="replace").read() if os.path.exists(console) else ""
+        failed = next((line.strip() for line in text.splitlines() if any(m in line.lower() for m in FAILURE_MARKS)), None)
+        if failed:
+            # The config keeps running after playdemo fails, so without this the error screen gets recorded.
+            _run("pkill", "-x", "hl_linux")
+            raise RenderError(f"CS couldn't play the demo: {failed}")
         if "==REC==" in text:
             break
         waited = time.time() - began

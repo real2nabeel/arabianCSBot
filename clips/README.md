@@ -51,5 +51,9 @@ Log: `~/clips/nightly.log`.
   is shut down, the other session is never kicked) and the review channel says so; run `/clips-run` again later.
 - CS is drawn by the Intel GPU (about 30% of one core). Without the GPU X server it falls back to software
   drawing at ~32 FPS using six cores, which is too slow for 60 FPS recording.
+- The server's own models, sounds, sprites and HUD graphics (skins, plugin models) are mirrored once a day into the
+  renderer's `cstrike_downloads` (`nightly.sync_content`), with any custom map a demo uses: demo playback can't
+  download them and CS stops with "Cannot continue without model ...". If CS fails to load a demo, the clip
+  fails with that console line instead of recording the error screen.
 - `playdemo` resets the volume and some HUD settings, so `render.py` sets them again after the fast-forward.
 - The kill feed appears 0.46 s after a kill's demo time (`compose.KILL_FEED_DELAY`, measured).

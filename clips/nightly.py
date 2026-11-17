@@ -51,15 +51,80 @@ def read_env(path):
     return cfg
 
 
-def fetch():
-    """Download finished demos and the last two days' lists. Returns the local demo folder."""
+def ftp_connect():
     cfg = read_env(FTP_ENV)
-    demos_dir = os.path.join(WORK, "demos")
-    os.makedirs(demos_dir, exist_ok=True)
     ftp = ftplib.FTP(timeout=120)
     ftp.connect(cfg["remote_host"], int(cfg.get("port", 21)))
     ftp.login(cfg["username"], cfg["pass"])
     ftp.voidcmd("TYPE I")
+    return ftp
+
+
+# The server's own models, sounds, sprites and HUD graphics (skins, custom knives, plugin models...). A player's
+# game downloads them on joining; demo playback can't, and CS stops with "Cannot continue without model ...".
+# So they are mirrored into the renderer's cstrike_downloads (where downloads go), once a day.
+CONTENT_DIRS = ("models", "sound", "sprites", "gfx")
+CONTENT_SKIP = (".ztmp", ".bz2", ".tmp")
+CONTENT_EVERY = 24 * 3600
+
+
+def _local_copy(rel):
+    """True if the renderer's CS already has this file (stock, or downloaded before)."""
+    return any(os.path.exists(os.path.join(render.HL, game, rel)) for game in ("cstrike", "cstrike_downloads", "valve"))
+
+
+def _get(ftp, remote, local):
+    os.makedirs(os.path.dirname(local), exist_ok=True)
+    with open(local + ".part", "wb") as fh:
+        ftp.retrbinary(f"RETR {remote}", fh.write)
+    os.replace(local + ".part", local)
+
+
+def sync_content(maps):
+    """Download server content the renderer's CS is missing, and the .bsp of any map the demos use."""
+    stamp = os.path.join(WORK, "content.stamp")
+    due = not os.path.exists(stamp) or time.time() - os.path.getmtime(stamp) > CONTENT_EVERY
+    missing_maps = [m for m in maps if m and not _local_copy(f"maps/{m}.bsp")]
+    if not due and not missing_maps:
+        return
+    target = os.path.join(render.HL, "cstrike_downloads")
+    ftp = ftp_connect()
+    got, size = 0, 0
+    try:
+        def walk(d):
+            for name, f in ftp.mlsd(d, facts=["type", "size"]):
+                p = f"{d}/{name}"
+                if f["type"] == "dir":
+                    yield from walk(p)
+                elif f["type"] == "file":
+                    yield p, int(f.get("size", 0))
+        wanted = []
+        if due:
+            for top in CONTENT_DIRS:
+                for path, n in walk(f"{REMOTE_DEMOS}/{top}"):
+                    rel = path[len(REMOTE_DEMOS) + 1:]
+                    if not rel.endswith(CONTENT_SKIP) and not _local_copy(rel):
+                        wanted.append((rel, n))
+        wanted += [(f"maps/{m}.bsp", 0) for m in missing_maps]
+        for rel, n in wanted:
+            try:
+                _get(ftp, f"{REMOTE_DEMOS}/{rel}", os.path.join(target, rel))
+                got, size = got + 1, size + n
+            except ftplib.error_perm as e:
+                say(f"  could not download {rel}: {e}")
+    finally:
+        ftp.quit()
+    if due:
+        open(stamp, "w").close()
+    if got:
+        say(f"server content: downloaded {got} files ({size / 1e6:.0f} MB) into cstrike_downloads")
+
+
+def fetch():
+    """Download finished demos and the last two days' lists. Returns the local demo folder."""
+    demos_dir = os.path.join(WORK, "demos")
+    os.makedirs(demos_dir, exist_ok=True)
+    ftp = ftp_connect()
     now = dt.datetime.now(dt.timezone.utc)
     try:
         for name, f in ftp.mlsd(REMOTE_DEMOS, facts=["type", "size", "modify"]):
@@ -212,6 +277,8 @@ def run(a):
 
     demos_dir = os.path.join(WORK, "demos") if a.no_fetch else fetch()
     demos = scan_demos(demos_dir)
+    if not a.no_fetch and not a.dry_run:
+        sync_content({info.get("map", "") for info in demos.values()})
     moments = load_moments()
     clips = [c for c in select.plan(moments, demos, top=10_000, min_score=MIN_SCORE) if c["key"] not in done]
     say(f"{len(moments)} moments listed, {len(demos)} demos, {len(clips)} new clips; making up to {a.limit}")
