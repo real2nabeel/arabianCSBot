@@ -127,11 +127,15 @@ def fetch():
     ftp = ftp_connect()
     now = dt.datetime.now(dt.timezone.utc)
     try:
-        for name, f in ftp.mlsd(REMOTE_DEMOS, facts=["type", "size", "modify"]):
-            if f.get("type") != "file" or not (name.startswith("clips-") and name.endswith(".dem")):
-                continue
+        listing = [(name, f) for name, f in ftp.mlsd(REMOTE_DEMOS, facts=["type", "size", "modify"])
+                   if f.get("type") == "file" and name.startswith("clips-") and name.endswith(".dem")]
+        # HLTV writes one demo at a time, the newest (names start with the date and time), and only finishes it at a
+        # map change. It writes to disk in bursts, so "not modified for a while" isn't enough to call it finished.
+        newest = max((name for name, _ in listing), default=None)
+        for name, f in listing:
             modified = dt.datetime.strptime(f["modify"][:14], "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc)
-            if (now - modified).total_seconds() < SETTLED_SECONDS:
+            idle = (now - modified).total_seconds()
+            if idle < SETTLED_SECONDS or (name == newest and idle < 3 * 3600):
                 continue  # still being recorded
             local = os.path.join(demos_dir, name)
             if os.path.exists(local) and os.path.getsize(local) == int(f["size"]):
