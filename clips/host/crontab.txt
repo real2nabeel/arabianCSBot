@@ -1,3 +1,5 @@
-# Nightly clips (crontab -e as the desktop user). Every 30 minutes from 03:00 to 10:30, when the server is quiet;
-# runs that find nothing new finish in seconds, and a run interrupted by Steam being busy carries on next time.
-*/30 3-10 * * * cd $HOME/discord_bots/arabian_bot/arabianCSBot && /usr/bin/python3 -m clips.nightly >> $HOME/clips/nightly.log 2>&1
+# Clips (crontab -e as the desktop user). Every minute: does nothing unless /clips-run in Discord left a request
+# in ~/clips/control, then makes the clips and writes ~/clips/control/status.json for the bot to report.
+* * * * * cd $HOME/discord_bots/arabian_bot/arabianCSBot && /usr/bin/python3 -m clips.nightly --if-requested >> $HOME/clips/nightly.log 2>&1
+# Optional automatic run instead (uncomment): every 30 minutes from 03:00 to 10:30.
+# */30 3-10 * * * cd $HOME/discord_bots/arabian_bot/arabianCSBot && /usr/bin/python3 -m clips.nightly >> $HOME/clips/nightly.log 2>&1

@@ -74,5 +74,21 @@ class TestDecision(unittest.TestCase):
         self.assertEqual(clips.decision({clips.APPROVE: {1}, clips.REJECT: {2}}, {1, 2}), "rejected")
 
 
+
+class TestRunReport(unittest.TestCase):
+    def test_done(self):
+        self.assertEqual(clips.run_report({"state": "done", "made": 2, "requested_by": 7}),
+                         "🎬 Clip run finished (started by <@7>): 2 new clips below.")
+        self.assertIn("1 couldn't be made (Boom)",
+                      clips.run_report({"state": "done", "made": 1, "failed": 1, "error": "Boom"}))
+
+    def test_busy_and_nothing(self):
+        self.assertIn("in a game", clips.run_report({"state": "busy"}))
+        self.assertIn("no new highlights", clips.run_report({"state": "nothing"}))
+
+    def test_running_has_no_report(self):
+        self.assertIsNone(clips.run_report({"state": "running"}))
+
+
 if __name__ == "__main__":
     unittest.main()

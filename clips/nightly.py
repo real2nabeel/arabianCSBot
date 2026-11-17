@@ -5,10 +5,12 @@
 3. Record each one with sound (clips.render) and make the two video files (clips.compose).
 4. Write CLIPS_OUT/<key>/{hq.mp4, discord.mp4, meta.json}. The bot picks those up and posts them for review.
 
-Safe to run often (cron every 30 minutes at night): a lock stops overlapping runs, finished clips are remembered in
-WORK/done.json, and if Steam is busy because the owner is playing, the run stops and the next one carries on.
+Normally started from Discord: /clips-run (cogs/clips.py) writes CONTROL/request.json, and cron runs
+`python3 -m clips.nightly --if-requested` every minute, which does nothing unless that file exists. The result goes
+to CONTROL/status.json, which the bot reports in the review channel. A lock stops overlapping runs, finished
+clips are remembered in WORK/done.json, and if Steam is busy because the owner is playing, the run stops.
 
-    python -m clips.nightly [--dry-run] [--limit N]
+    python -m clips.nightly [--if-requested] [--dry-run] [--limit N]
 Exit codes: 0 done or nothing to do, 75 Steam busy (try later), 1 error.
 """
 import argparse
@@ -26,6 +28,7 @@ HOME = os.path.expanduser("~/clips")
 WORK = os.environ.get("CLIPS_WORK", os.path.join(HOME, "work"))
 OUT = os.environ.get("CLIPS_OUT", os.path.join(HOME, "out"))
 FTP_ENV = os.environ.get("CLIPS_FTP_ENV", os.path.join(HOME, "ftp.env"))
+CONTROL = os.environ.get("CLIPS_CONTROL", os.path.join(HOME, "control"))   # shared with the bot (read-write)
 REMOTE_DEMOS = "servers/hlds/cstrike"
 REMOTE_LISTS = "servers/hlds/cstrike/addons/amxmodx/logs"
 PER_RUN = int(os.environ.get("CLIPS_PER_NIGHT", "8"))
@@ -154,12 +157,23 @@ def make_clip(clip, info, done):
     say(f"made {key}: {clip['player']} - {clip['summary']} ({length:.0f} s, recorded in {took:.0f} s)")
 
 
+def write_status(**fields):
+    os.makedirs(CONTROL, exist_ok=True)
+    tmp = os.path.join(CONTROL, "status.json.tmp")
+    json.dump(fields, open(tmp, "w", encoding="utf8"), ensure_ascii=False)
+    os.replace(tmp, os.path.join(CONTROL, "status.json"))
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--if-requested", action="store_true", help="only run if the bot left a request (cron mode)")
     ap.add_argument("--dry-run", action="store_true", help="download and choose, but don't render")
     ap.add_argument("--limit", type=int, default=PER_RUN)
     ap.add_argument("--no-fetch", action="store_true")
     a = ap.parse_args()
+    request_path = os.path.join(CONTROL, "request.json")
+    if a.if_requested and not os.path.exists(request_path):
+        return 0
     os.makedirs(WORK, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
     lock = open(os.path.join(WORK, "lock"), "w")
@@ -168,6 +182,31 @@ def main():
     except BlockingIOError:
         say("another run is still going")
         return 0
+    if not a.if_requested:
+        return 75 if run(a)["state"] == "busy" else 0
+    try:
+        request = json.load(open(request_path, encoding="utf8"))
+    except (OSError, ValueError):
+        request = {}
+    os.remove(request_path)
+    started = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    who = request.get("requested_by_name", "")
+    say(f"run requested by {who or 'unknown'}")
+    write_status(state="running", requested_by=request.get("requested_by"), requested_by_name=who, started=started)
+    result = {"state": "error", "made": 0, "failed": 0, "error": ""}
+    try:
+        result = run(a)
+    except Exception as e:
+        result["error"] = f"{type(e).__name__}: {e}"[:300]
+        say(f"run failed: {result['error']}")
+    finally:
+        write_status(requested_by=request.get("requested_by"), requested_by_name=who, started=started,
+                     finished=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **result)
+    return 75 if result["state"] == "busy" else 0
+
+
+def run(a):
+    """One run. Returns {"state": done|nothing|busy, "made": n, "failed": n, "error": ""}."""
     done_path = os.path.join(WORK, "done.json")
     done = json.load(open(done_path)) if os.path.exists(done_path) else {}
 
@@ -178,30 +217,34 @@ def main():
     say(f"{len(moments)} moments listed, {len(demos)} demos, {len(clips)} new clips; making up to {a.limit}")
     for c in clips[:a.limit]:
         say(f"  {c['score']:>4}  {c['player']} - {c['summary']} ({c['end'] - c['start']:.0f} s, {os.path.basename(c['demo'])})")
+    result = {"state": "nothing", "made": 0, "failed": 0, "error": ""}
     if a.dry_run or not clips:
-        return 0
+        return result
 
     render.ensure_display()
     render.ensure_audio()
     render.start_steam()
-    status = 0
+    result["state"] = "done"
     try:
         for c in clips[:a.limit]:
             try:
                 make_clip(c, demos[c["demo"]], done)
+                result["made"] += 1
             except render.SteamBusy as e:
                 say(f"stopping: {e}; the next run will carry on")
-                status = 75
+                result["state"] = "busy"
                 break
-            except Exception as e:  # one bad clip shouldn't stop the night
+            except Exception as e:  # one bad clip shouldn't stop the run
                 say(f"failed {c['key']}: {type(e).__name__}: {e}")
                 done[c["key"]] = "failed"
+                result["failed"] += 1
+                result["error"] = f"{type(e).__name__}: {e}"[:300]
             json.dump(done, open(done_path, "w"), indent=1)
     finally:
         if os.environ.get("CLIPS_STOP_STEAM", "1") == "1":
             render.stop_steam()
         cleanup(demos_dir)
-    return status
+    return result
 
 
 if __name__ == "__main__":

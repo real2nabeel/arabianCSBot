@@ -17,6 +17,8 @@ services:
     volumes:
       - ${CLIPS_HOST_DIR:-./clips_out}:/clips:ro
       - ${CLIPS_SECRETS_DIR:-./clips_secrets}:/clips-secrets
+      # /clips-run leaves a request here; the host job reports back in status.json.
+      - ${CLIPS_CONTROL_HOST_DIR:-./clips_control}:/clips-control
     logging:
       driver: json-file
       options:

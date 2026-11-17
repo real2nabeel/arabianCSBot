@@ -68,3 +68,25 @@ def decision(reactions, approver_ids):
     if reactions.get(APPROVE, set()) & approver_ids:
         return "approved"
     return "pending"
+
+
+def run_report(status):
+    """Review-channel message for a finished /clips-run (status.json from clips/nightly.py), or None while running."""
+    state = status.get("state")
+    who = status.get("requested_by")
+    by = f" (started by <@{who}>)" if who else ""
+    made, failed = status.get("made", 0), status.get("failed", 0)
+    if state == "done":
+        text = f"🎬 Clip run finished{by}: {made} new clip{'s' if made != 1 else ''} below."
+        if failed:
+            text += f" {failed} couldn't be made ({status.get('error', 'unknown error')})."
+        return text
+    if state == "nothing":
+        return f"🎬 Clip run finished{by}: no new highlights since the last run."
+    if state == "busy":
+        text = (f"⏸️ Clip run stopped{by}: the Steam account is in a game on another computer. "
+                "Run /clips-run again when nobody is playing on it.")
+        return text + (f" {made} clip{'s' if made != 1 else ''} made before that." if made else "")
+    if state == "error":
+        return f"⚠️ Clip run failed{by}: {status.get('error') or 'unknown error'}"
+    return None
