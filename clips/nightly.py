@@ -10,7 +10,11 @@ Normally started from Discord: /clips-run (cogs/clips.py) writes CONTROL/request
 to CONTROL/status.json, which the bot reports in the review channel. A lock stops overlapping runs, finished
 clips are remembered in WORK/done.json, and if Steam is busy because the owner is playing, the run stops.
 
-    python -m clips.nightly [--if-requested] [--dry-run] [--limit N]
+The game server deletes its demos after a day, so cron also runs `--fetch-only` every hour: it downloads the finished
+demos and lists (and the server's content) without rendering, so they are here whenever a run is requested. Each demo
+is downloaded once and each clip is made once, however the runs are mixed.
+
+    python -m clips.nightly [--if-requested | --fetch-only] [--dry-run] [--limit N]
 Exit codes: 0 done or nothing to do, 75 Steam busy (try later), 1 error.
 """
 import argparse
@@ -180,15 +184,16 @@ def scan_demos(demos_dir):
         path = os.path.join(demos_dir, name)
         cache = path + ".scan.json"
         if os.path.exists(cache) and os.path.getmtime(cache) >= os.path.getmtime(path):
-            out[path] = json.load(open(cache, encoding="utf8"))
-            continue
-        try:
-            info = demo.scan(path)
-        except demo.DemoError as e:
-            say(f"skipping {name}: {e}")
-            continue
-        json.dump(info, open(cache, "w", encoding="utf8"))
-        out[path] = info
+            info = json.load(open(cache, encoding="utf8"))
+        else:
+            try:
+                info = demo.scan(path)
+            except demo.DemoError as e:
+                say(f"skipping {name}: {e}")
+                info = {"error": str(e)}   # remembered, so an unusable demo is reported once
+            json.dump(info, open(cache, "w", encoding="utf8"))
+        if "error" not in info:
+            out[path] = info
     return out
 
 
@@ -239,6 +244,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="download and choose, but don't render")
     ap.add_argument("--limit", type=int, default=PER_RUN)
     ap.add_argument("--no-fetch", action="store_true")
+    ap.add_argument("--fetch-only", action="store_true", help="download and scan new demos, don't render (hourly cron)")
     a = ap.parse_args()
     request_path = os.path.join(CONTROL, "request.json")
     if a.if_requested and not os.path.exists(request_path):
@@ -250,6 +256,12 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         say("another run is still going")
+        return 0
+    if a.fetch_only:
+        demos_dir = fetch()
+        demos = scan_demos(demos_dir)
+        sync_content({info.get("map", "") for info in demos.values()})
+        cleanup(demos_dir)
         return 0
     if not a.if_requested:
         return 75 if run(a)["state"] == "busy" else 0

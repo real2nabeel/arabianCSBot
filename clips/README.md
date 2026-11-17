@@ -36,8 +36,9 @@ HLTV "arabian-servers.com 2013" -> clips-*.dem ─┴─ FTP ─> clips/nightly.
 3. Blank CS's "Press DUCK for Spectator Menu" line once (the renderer's copy of CS only): in
    `cstrike/resource/cstrike_english.txt` (UTF-16) set `"Cstrike_TitlesTXT_Spec_Duck"` to `""`.
 4. `~/clips/ftp.env` with the game server's FTP login (`remote_host=`, `port=`, `username=`, `pass=`), readable only by you.
-5. Cron (`crontab -e`): the line in `host/crontab.txt`. It checks every minute for a `/clips-run` request
-   (a run with nothing requested exits at once). `mkdir -p ~/clips/control`.
+5. Cron (`crontab -e`): the lines in `host/crontab.txt`. One checks every minute for a `/clips-run` request
+   (a run with nothing requested exits at once); the other downloads new demos every hour without rendering,
+   because the game server deletes its demos after a day. `mkdir -p ~/clips/control`.
 6. In the bot's `.env`: the `CLIPS_*` and `META_*` settings (see `.env.example`), including
    `CLIPS_CONTROL_HOST_DIR=/home/<you>/clips/control`, then recreate the container (`docker compose up -d --build`).
 
