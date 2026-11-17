@@ -1,0 +1,19 @@
+# GPU X server for rendering CS clips on a machine with no monitor.
+# Install: sudo cp clips/host/xorg-clips.conf /etc/X11/ && sudo cp clips/host/clips-display.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now clips-display
+# The HDMI output is forced "connected" first (the setting doesn't survive a reboot), so Xorg and Steam get a
+# real 1920x1080 screen on the Intel GPU. Nothing is shown on any physical port.
+[Unit]
+Description=GPU X server for CS clip rendering (display :98)
+After=systemd-user-sessions.service
+
+[Service]
+Environment=CLIPS_USER=nabeel
+ExecStartPre=/bin/sh -c 'echo on > /sys/class/drm/card0-HDMI-A-1/status'
+ExecStartPre=/bin/sh -c 'f=/home/$CLIPS_USER/.Xauthority; touch $f; chown $CLIPS_USER: $f; runuser -u $CLIPS_USER -- xauth -f $f list :98 | grep -q . || runuser -u $CLIPS_USER -- xauth -f $f add :98 . $(mcookie)'
+ExecStart=/usr/lib/xorg/Xorg :98 -config /etc/X11/xorg-clips.conf -auth /home/${CLIPS_USER}/.Xauthority -nolisten tcp -novtswitch vt7
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
