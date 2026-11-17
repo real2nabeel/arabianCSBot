@@ -6,10 +6,13 @@ frames carry the raw server messages, which is where the clip_highlights plugin'
   [clips] mark <id> t=<game clock>             one per highlight
   [clips] round <n> t=<game clock>             one per round start
   [clips] kill t=.. k=.. v=.. hs=.. w=.. kt=.. vt=..<TAB>killer<TAB>victim
+  [clips] anim t=.. p=<slot> a=<animation> b=<body>   every weapon animation (the game sends these only to the
+                                                     weapon's owner, so HLTV wouldn't have them otherwise)
 
-``scan`` finds all of them with their demo time. ``follow`` writes a copy of a demo that makes HLTV's camera follow
-one player in first person during a time window (it appends HLTV director messages to every frame in the window;
-the game obeys them because spec_autodirector is on by default).
+``scan`` finds the mark/round/kill lines with their demo time. ``follow`` writes a copy of a demo that makes HLTV's
+camera follow one player in first person during a time window (it appends HLTV director messages to every frame in
+the window; the game obeys them because spec_autodirector is on by default), and turns that player's anim lines
+into real weapon animation messages, so switching, reloading and knife attacks animate.
 """
 import re
 import struct
@@ -18,12 +21,14 @@ HEADER_LEN = 8 + 4 + 4 + 260 + 260 + 4 + 4   # magic, demo/net protocol, map, ga
 ENTRY_LEN = 92
 FRAME_INFO_LEN = 436 + 28                      # demo info + sequence info before a network message
 
+SVC_WEAPONANIM = 35
 SVC_DIRECTOR = 51
 DRC_CMD_EVENT = 2
 DRC_CMD_MODE = 3
 OBS_IN_EYE = 4
 
 _LINE = re.compile(rb"\[clips\] (mark|round|kill) ([^\x00\n]*)")
+_ANIM = re.compile(rb"\[clips\] anim t=[0-9.]+ p=(\d+) a=(\d+) b=(\d+)")
 
 
 class DemoError(Exception):
@@ -131,14 +136,21 @@ def follow(src, dst, entity, t0, t1):
     diroff, = struct.unpack_from("<i", d, HEADER_LEN - 4)
     extra = _director(entity)
     out = bytearray(d[:HEADER_LEN])
-    entries, changed = [], 0
+    entries, changed, seen = [], 0, set()
     for base, offset, length in _entries(d):
         entry = bytearray(d[base:base + ENTRY_LEN])
         new_offset = len(out)
         for fs, fe, t, msg in _frames(d, offset, offset + length):
             if msg is not None and t0 <= t <= t1:
                 mlen, = struct.unpack_from("<i", d, msg)
-                out += d[fs:msg] + struct.pack("<i", mlen + len(extra)) + d[msg + 4:fe] + extra
+                add = extra
+                body = d[msg + 4:msg + 4 + mlen]
+                if b"[clips] anim" in body:
+                    for m in _ANIM.finditer(body):
+                        if int(m.group(1)) == entity and m.group(0) not in seen:   # HLTV can repeat a line
+                            seen.add(m.group(0))
+                            add += bytes([SVC_WEAPONANIM, int(m.group(2)) & 0xFF, int(m.group(3)) & 0xFF])
+                out += d[fs:msg] + struct.pack("<i", mlen + len(add)) + d[msg + 4:fe] + add
                 changed += 1
             else:
                 out += d[fs:fe]
