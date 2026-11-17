@@ -50,6 +50,12 @@ def ensure_audio():
     _run("pactl", "set-default-sink", SINK)
     if "module-suspend-on-idle" in _run("pactl", "list", "short", "modules").stdout:
         _run("pactl", "unload-module", "module-suspend-on-idle")
+    # Pin the sound server so Steam, CS (started via tmux, which can carry another environment) and ffmpeg all
+    # use the same one; otherwise CS can play into one server while ffmpeg records silence from another.
+    for line in _run("pactl", "info").stdout.splitlines():
+        if line.startswith("Server String:"):
+            server = line.split(":", 1)[1].strip()
+            os.environ["PULSE_SERVER"] = server if ":" in server else f"unix:{server}"
 
 
 def ensure_display():
@@ -66,7 +72,8 @@ def start_steam(wait=90):
         return
     _run("tmux", "kill-session", "-t", "steam")
     log = os.path.expanduser("~/clips/steam.log")
-    _run("tmux", "new-session", "-d", "-s", "steam", f"export DISPLAY={DISPLAY} PULSE_SINK={SINK}; {STEAM} > {log} 2>&1")
+    _run("tmux", "new-session", "-d", "-s", "steam", f"export DISPLAY={DISPLAY} PULSE_SINK={SINK} PULSE_SERVER='{os.environ.get('PULSE_SERVER', '')}'; "
+         f"{STEAM} > {log} 2>&1")
     time.sleep(wait)
 
 
