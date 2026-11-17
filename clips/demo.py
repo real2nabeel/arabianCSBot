@@ -20,6 +20,10 @@ into real weapon animation messages, so switching, reloading and knife attacks a
 ``follow`` rebuilds the followed player's messages byte for byte (AMX Mod X argument types, encoded the way the
 engine writes them) using the message numbers from the demo's own svc_newusermsg table, so scope zoom, flashbangs,
 grenade shake and the hit indicator show in the clip.
+
+``follow`` also adds a console-only time marker ("[clipsync] <demo seconds>", a TextMsg to the console) every half
+second up to the clip's start. CS prints them to its console log while it plays the copy, so the renderer can see
+exactly where the playback is instead of guessing from how many frames it has run.
 """
 import re
 import struct
@@ -39,6 +43,9 @@ _ANIM = re.compile(rb"\[clips\] anim t=[0-9.]+ p=(\d+) a=(\d+) b=(\d+)")
 _MSG = re.compile(rb"\[clips\] msg t=[0-9.]+ p=(\d+) n=(\w+) a=([-0-9.:,]*)")
 # One-player messages the plugin copies to HLTV: scope zoom, flashbang, grenade shake, hit indicator.
 PERSONAL_MSGS = ("SetFOV", "ScreenFade", "ScreenShake", "Damage")
+SYNC_EVERY = 0.5          # demo seconds between time markers
+SYNC_RE = re.compile(r"\[clipsync\] ([0-9.]+)")
+HUD_PRINTCONSOLE = 2
 
 
 class DemoError(Exception):
@@ -142,10 +149,10 @@ def _director(entity):
 SVC_NEWUSERMSG = 39
 
 
-def user_messages(d):
+def user_messages(d, names=PERSONAL_MSGS + ("TextMsg",)):
     """{name: (id, size)} from the demo's svc_newusermsg table (size 255 = variable length)."""
     out = {}
-    for name in PERSONAL_MSGS:
+    for name in names:
         key = name.encode() + b"\x00"
         pos = d.find(key)
         while pos != -1:
@@ -187,8 +194,18 @@ def _user_message(table, name, args):
     return bytes([msg_id]) + payload if len(payload) == size else b""
 
 
-def follow(src, dst, entity, t0, t1):
-    """Copy ``src`` to ``dst`` with the camera following ``entity`` in first person from t0 to t1 (demo seconds).
+def console_text(table, text):
+    """A TextMsg that prints ``text`` to the console only (nothing on screen), or b"" if the demo has no TextMsg."""
+    if "TextMsg" not in table:
+        return b""
+    msg_id, size = table["TextMsg"]
+    payload = bytes([HUD_PRINTCONSOLE]) + text.encode("latin1") + b"\x00"
+    return bytes([msg_id, len(payload)]) + payload if size == 255 else b""
+
+
+def follow(src, dst, entity, t0, t1, sync_until=None):
+    """Copy ``src`` to ``dst`` with the camera following ``entity`` in first person from t0 to t1 (demo seconds),
+    with a time marker every SYNC_EVERY seconds before ``sync_until`` (see the module notes).
     Returns the number of frames changed."""
     d = open(src, "rb").read()
     diroff, = struct.unpack_from("<i", d, HEADER_LEN - 4)
@@ -196,13 +213,24 @@ def follow(src, dst, entity, t0, t1):
     table = user_messages(d)
     out = bytearray(d[:HEADER_LEN])
     entries, changed, seen = [], 0, set()
+    next_sync = 0.0
+    # Markers only after the game has learnt the TextMsg number (an unknown user message would stop the demo).
+    key = b"TextMsg\x00"
+    registered = d.find(key)
+    while registered != -1 and not (registered >= 3 and d[registered - 3] == SVC_NEWUSERMSG):
+        registered = d.find(key, registered + 1)
     for base, offset, length in _entries(d):
         entry = bytearray(d[base:base + ENTRY_LEN])
         new_offset = len(out)
         for fs, fe, t, msg in _frames(d, offset, offset + length):
+            add = b""
+            if (msg is not None and sync_until is not None and next_sync <= t < sync_until
+                    and registered != -1 and fs > registered):
+                add += console_text(table, f"[clipsync] {t:.2f}")
+                next_sync = t + SYNC_EVERY
             if msg is not None and t0 <= t <= t1:
                 mlen, = struct.unpack_from("<i", d, msg)
-                add = extra
+                add += extra
                 body = d[msg + 4:msg + 4 + mlen]
                 if b"[clips] anim" in body:
                     for m in _ANIM.finditer(body):
@@ -214,6 +242,8 @@ def follow(src, dst, entity, t0, t1):
                         if int(m.group(1)) == entity and m.group(0) not in seen:
                             seen.add(m.group(0))
                             add += _user_message(table, m.group(2).decode(), m.group(3).decode())
+            if add:
+                mlen, = struct.unpack_from("<i", d, msg)
                 out += d[fs:msg] + struct.pack("<i", mlen + len(add)) + d[msg + 4:fe] + add
                 changed += 1
             else:

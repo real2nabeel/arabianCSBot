@@ -2,8 +2,14 @@
 
 CS's own `startmovie` writes frames without sound, so the moment is played at normal speed and ffmpeg records the
 screen (x11grab) and a PulseAudio null sink together. Before that, the demo is fast-forwarded with a large
-host_framerate step. Settings that `playdemo` resets (volume, the kill feed time) are applied after the
-fast-forward, then the config prints ==REC== to the console log, which starts the recording.
+host_framerate step.
+
+How far a fast-forward frame gets depends on the demo (a frame of an update-rate-100 demo covered about a quarter
+of the 0.25 s asked for), so the frames aren't counted. The demo copy carries a console-only time marker every half
+second (demo.follow), CS prints them to qconsole.log, and the renderer steers with them: the game loops
+"wait a few frames, exec clipff.cfg", and the renderer rewrites clipff.cfg. It keeps fast-forwarding until
+SLOW_LEAD seconds before the moment, then switches to normal speed (and re-applies the settings `playdemo` resets:
+volume, the kill feed time), and starts recording when a marker says the moment is due.
 
 Steam lets one account run one game at a time: if the owner is playing elsewhere, Steam asks (inside its main
 window) whether to disconnect that session, and logs "KickingOtherSession". The dialog is never answered: Steam is
@@ -14,11 +20,14 @@ import shutil
 import subprocess
 import time
 
+from clips import demo
+
 HL = os.path.expanduser(os.environ.get("CLIPS_HL_DIR", "~/.steam/debian-installation/steamapps/common/Half-Life"))
 DISPLAY = os.environ.get("CLIPS_DISPLAY", ":98")
 SINK = os.environ.get("CLIPS_SINK", "clips")
 VOLUME = os.environ.get("CLIPS_VOLUME", "0.5")
-STEP = 0.25            # demo seconds per frame while fast-forwarding (the screen is capped at 60 frames a second)
+STEP = 0.25            # host_framerate while fast-forwarding (asked-for demo seconds per frame)
+SLOW_LEAD = 15.0       # switch to normal speed this many demo seconds before the moment
 DEMO_NAME = "clipsrender"
 # Debian puts Steam in /usr/games, which cron's minimal PATH leaves out.
 STEAM = os.environ.get("CLIPS_STEAM") or shutil.which("steam") or "/usr/games/steam"
@@ -84,27 +93,29 @@ def stop_steam():
     _run("tmux", "kill-session", "-t", "steam")
 
 
-def _waits(n):
-    out = []
-    for size, alias in ((500, "w500"), (50, "w50")):
-        out += [alias] * (n // size)
-        n %= size
-    return ";".join(out + ["wait"] * n)
+def _write(name, lines):
+    path = os.path.join(HL, "cstrike", name)
+    with open(path + ".tmp", "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    os.replace(path + ".tmp", path)   # the game may exec it at any moment
 
 
-def write_config(start):
-    """clipfind.cfg: fast-forward DEMO_NAME to ``start`` demo seconds, then play it normally and print ==REC==."""
-    lines = [
-        'alias w50 "' + ";".join(["wait"] * 50) + '"',
-        'alias w500 "w50;w50;w50;w50;w50;w50;w50;w50;w50;w50"',
+def write_config():
+    """clipfind.cfg: play DEMO_NAME fast-forwarding, and keep running clipff.cfg, which the renderer rewrites."""
+    _write("clipff.cfg", ["clipff"])   # keep going
+    _write("clipfind.cfg", [
+        'alias w5 "wait;wait;wait;wait;wait"',
+        'alias clipff "w5;exec clipff.cfg"',
         f"volume {VOLUME}", "cl_showfps 0", "fps_max 100",
         f"host_framerate {STEP}", f"playdemo {DEMO_NAME}",
-        _waits(int(round(start / STEP))),
-        "host_framerate 0", "stopsound", f"volume {VOLUME}", "hud_deathnotice_time 0", "cl_showfps 0",
-        "echo ==REC==",
-    ]
-    with open(os.path.join(HL, "cstrike", "clipfind.cfg"), "w") as fh:
-        fh.write("\n".join(lines) + "\n")
+        "clipff",
+    ])
+
+
+def slow_down():
+    """Normal speed from here, with the settings `playdemo` reset; the clipff loop stops."""
+    _write("clipff.cfg", ["host_framerate 0", "stopsound", f"volume {VOLUME}", "hud_deathnotice_time 0",
+                          "cl_showfps 0", "echo ==SLOW=="])
 
 
 # Console lines meaning the demo didn't load (e.g. a model the server uses that this CS doesn't have).
@@ -131,10 +142,28 @@ def _steam_busy_since(offset):
         return False
 
 
-def record(demo_path, start, length, out_mkv, start_timeout=120):
-    """Record ``length`` seconds of ``demo_path`` from demo time ``start`` into ``out_mkv`` (1080p60 + sound)."""
+class _Console:
+    """Reads what CS appends to qconsole.log."""
+
+    def __init__(self, path):
+        self.path, self.pos = path, 0
+
+    def new_text(self):
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(self.pos)
+                data = fh.read()
+        except OSError:
+            return ""
+        self.pos += len(data)
+        return data.decode("latin1")
+
+
+def record(demo_path, start, length, out_mkv, start_timeout=400):
+    """Record ``length`` seconds of ``demo_path`` (made by demo.follow with sync_until=start) from demo time
+    ``start`` into ``out_mkv`` (1080p60 + sound)."""
     shutil.copyfile(demo_path, os.path.join(HL, "cstrike", DEMO_NAME + ".dem"))
-    write_config(start)
+    write_config()
     console = os.path.join(HL, "qconsole.log")
     if os.path.exists(console):
         os.remove(console)
@@ -144,15 +173,28 @@ def record(demo_path, start, length, out_mkv, start_timeout=120):
                       "-nojoy", "-condebug", "+exec", "clipfind.cfg"],
                      env=_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     began = time.time()
+    log, slow, tail = _Console(console), False, ""
     while True:
-        text = open(console, errors="replace").read() if os.path.exists(console) else ""
-        failed = next((line.strip() for line in text.splitlines() if any(m in line.lower() for m in FAILURE_MARKS)), None)
+        text = log.new_text()
+        lines = (tail + text).split("\n")
+        tail = lines.pop()   # an unfinished last line is read again next time
+        failed = next((line.strip() for line in lines if any(m in line.lower() for m in FAILURE_MARKS)), None)
         if failed:
             # The config keeps running after playdemo fails, so without this the error screen gets recorded.
             _run("pkill", "-x", "hl_linux")
             raise RenderError(f"CS couldn't play the demo: {failed}")
-        if "==REC==" in text:
-            break
+        marks = [m for line in lines for m in demo.SYNC_RE.findall(line)]
+        if marks:
+            at = float(marks[-1])
+            if not slow and at >= start - SLOW_LEAD:
+                slow_down()
+                slow = True
+            elif slow and at >= start - 2 * demo.SYNC_EVERY:
+                if at > start:
+                    _run("pkill", "-x", "hl_linux")
+                    raise RenderError(f"playback overshot the moment (at {at:.1f} s, moment at {start:.1f} s)")
+                time.sleep(max(0.0, start - at))   # normal speed now: demo seconds are real seconds
+                break
         waited = time.time() - began
         if _steam_busy_since(log_offset):
             # Steam is showing "already playing on another computer". Never answer it: shutting Steam down
