@@ -86,6 +86,10 @@ class TestPlan(unittest.TestCase):
         self.assertEqual([c["player"] for c in clips], ["Ace", "Bob"])
         self.assertEqual(clips[0]["key"], "2026-11-17_120000-1")
 
+    def test_moment_that_began_before_the_demo_is_skipped(self):
+        early = moment(id="120000-1", type="clutch", enemies=3, kills=3, start=10.0, end=106.2)  # mark at 50.0
+        self.assertEqual(select.plan([early], {"a.dem": self.demo}), [])
+
     def test_top_limit(self):
         other = moment(id="130000-3", player="Bob", entity=7, score=40, start=190.0, end=190.0, logged=196.0)
         self.assertEqual(len(select.plan([other, moment()], {"a.dem": self.demo}, top=1)), 1)
