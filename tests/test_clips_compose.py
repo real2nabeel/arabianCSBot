@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+from PIL import Image, ImageFont
+
 from clips import compose
 
 
@@ -52,6 +54,33 @@ class TestDiscordCopy(unittest.TestCase):
         _, rates = self.run_copy([over] * compose.DISCORD_TRIES)
         self.assertEqual(len(rates), compose.DISCORD_TRIES)
         self.assertTrue(all(int(a[:-1]) > int(b[:-1]) for a, b in zip(rates, rates[1:])))
+
+
+class TestFeedScale(unittest.TestCase):
+    """Rows are drawn at full size, then shrunk by FEED_SCALE (the font and game icons are stand-ins here)."""
+    KILL = dict(k=1, kn="chibchib", kt=1, w="deagle", hs=1, vn="ALGERIAN", vt=2, t=10.0, v=2)
+
+    def row(self, scale):
+        icon = Image.new("RGBA", (64, 32), (255, 150, 30, 255))
+        with mock.patch.object(compose, "FEED_SCALE", scale),                 mock.patch.object(compose, "FONT_OBJ", ImageFont.load_default(size=compose.FONT_SIZE)),                 mock.patch.object(compose, "icon", return_value=icon):
+            return compose.row_image(self.KILL, featured=1)
+
+    def test_rows_are_shrunk(self):
+        full, small = self.row(1.0), self.row(compose.FEED_SCALE)
+        self.assertEqual(small.size, (round(full.width * compose.FEED_SCALE), round(full.height * compose.FEED_SCALE)))
+
+    def test_feed_uses_the_shrunk_rows(self):
+        kills = [dict(self.KILL, t=10.0 + i, v=2 + i) for i in range(3)]
+        with mock.patch.object(compose, "row_image", side_effect=lambda k, f: Image.new("RGBA", (300, 40))):
+            out = tempfile.mkdtemp()
+            states = compose.feed_states(kills, start=9.0, length=8.0, offset=0.0, featured=1, tmp=out)
+        heights = []
+        for _, _, path in states:
+            with Image.open(path) as im:
+                heights.append(im.height)
+        tallest = max(heights)
+        self.assertEqual(tallest, 3 * (40 + round(compose.ROW_GAP * compose.FEED_SCALE)))
+        self.assertEqual(compose.FEED_SCALE, 0.65)
 
 
 if __name__ == "__main__":

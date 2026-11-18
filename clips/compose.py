@@ -15,6 +15,7 @@ LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "host", "logo.pn
 T_COLOR, CT_COLOR, ICON_COLOR = (255, 80, 80), (153, 204, 255), (255, 150, 30)
 FEED_TIME, MAX_ROWS = 6.0, 4          # CS shows a kill for 6 seconds, 4 at most
 ICON_SCALE, FONT_SIZE, ROW_GAP = 2, 30, 8
+FEED_SCALE = 0.65                     # rows are drawn at the sizes above, then shrunk to this (about CS's own size)
 GAME_W, GAME_TOP = 1680, (1920 - 693) // 2   # gameplay width and top in the 1080x1920 frame
 DISCORD_BYTES = 9.5 * 1024 * 1024    # aim for the Discord copy; Discord's limit is 10 MiB
 DISCORD_TRIES = 3                     # encodes at most: the aimed bitrate can come out about 2% big on hard clips
@@ -99,7 +100,7 @@ def row_image(k, featured):
         else:
             img.alpha_composite(v, (x, blur + (h - sh) // 2))
         x += sw + gap
-    return img
+    return img.resize((round(img.width * FEED_SCALE), round(img.height * FEED_SCALE)), Image.LANCZOS)
 
 def feed_states(kills, start, length, offset, featured, tmp):
     """PNG overlays of the kill feed and the time range each one is on screen (clip seconds)."""
@@ -117,11 +118,12 @@ def feed_states(kills, start, length, offset, featured, tmp):
             key = (k["t"], k["k"], k["v"])
             rows_cache[key] = rows_cache.get(key) or row_image(k, featured)
             imgs.append(rows_cache[key])
-        canvas = Image.new("RGBA", (1080, sum(i.height for i in imgs) + ROW_GAP * len(imgs)), (0, 0, 0, 0))
+        gap = round(ROW_GAP * FEED_SCALE)
+        canvas = Image.new("RGBA", (1080, sum(i.height for i in imgs) + gap * len(imgs)), (0, 0, 0, 0))
         y = 0
         for i in imgs:
             canvas.alpha_composite(i, (1080 - i.width - 10, y))
-            y += i.height + ROW_GAP
+            y += i.height + gap
         path = os.path.join(tmp, f"feed{len(states):03d}.png")
         canvas.save(path)
         states.append((a, b, path))
