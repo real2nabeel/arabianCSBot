@@ -109,5 +109,17 @@ class TestVideoTime(unittest.TestCase):
         self.assertAlmostEqual(fixed[0][0], 1.96)
 
 
+class TestFraming(unittest.TestCase):
+    def test_bar_hidden_matches_the_old_clips_height(self):
+        crop, width, height, top = compose.framing(True)
+        self.assertEqual(crop, "1920:936:0:0")             # only the bottom band cropped
+        self.assertEqual(height, 944)                      # old clips: 1920x1080 at 1680 wide -> 945
+        self.assertEqual(top, (1920 - 944) // 2)
+        self.assertGreater(width, 1080)                    # the sides are cut off, as before
+
+    def test_fallback_crops_both_bars(self):
+        self.assertEqual(compose.framing(False), ("1920:792:0:144", 1680, 692, 614))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -229,10 +229,14 @@ def make_clip(clip, info, done):
     demo.follow(clip["demo"], followed, clip["entity"], clip["start"] - 10, clip["end"] + 2, sync_until=clip["start"],
                 commands=(clip["start"] - render.SLOW_LEAD, render.SLOW_COMMANDS), sync_end=clip["end"] + 1)
     length = clip["end"] - clip["start"]
+    bar_hidden = render.hide_spectator_bar()
+    if not bar_hidden:
+        say(f"  {key}: couldn't hide the spectator bar; using the cropped framing")
     took, sync = render.record(followed, clip["start"], length, raw)
     if not sync:
         say(f"  {key}: no time markers seen while recording; the kill feed uses the fixed offset")
-    compose.compose(raw, info["kills"], clip["start"], out_dir + ".part", featured=clip["entity"], sync=sync)
+    compose.compose(raw, info["kills"], clip["start"], out_dir + ".part", featured=clip["entity"], sync=sync,
+                    bar_hidden=bar_hidden)
     meta = {k: clip[k] for k in ("key", "map", "player", "team", "score", "summary")}
     first = clip["moments"][0]
     meta.update({"date": first.get("date", ""), "round": first.get("round"), "length": round(length, 1),

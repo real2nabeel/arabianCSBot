@@ -1,8 +1,10 @@
 """Turning a raw 1920x1080 spectator recording into the finished clip files.
 
-Layout from ClipsPipeline/format_clips.bat: gameplay 1680 wide over a blurred copy, logo 230 px bottom-right.
-The spectator bars are cropped off and the game's own kill feed (which HLTV playback can't hide and the crop cuts
-off) is replaced by ours: drawn from the demo's "[clips] kill" lines in CS style with the game's own weapon icons,
+Layout from ClipsPipeline/format_clips.bat: gameplay over a blurred copy, logo 230 px bottom-right. Those clips were
+a player's own screen, gameplay 1680 wide and so 945 tall. HLTV playback adds spectator bars: the renderer hides the
+top one (render.hide_spectator_bar), the bottom one is cropped off, and the rest is zoomed to the same 945 height
+(1938 wide, a little more of the sides cut off). If the top bar couldn't be hidden, both bars are cropped and the
+gameplay is 1680 wide (693 tall). The game's own kill feed (which HLTV playback can't hide) is replaced by ours: drawn from the demo's "[clips] kill" lines in CS style with the game's own weapon icons,
 each line on a soft dark background. Writes hq.mp4 (1080x1920 60 fps, for social media) and discord.mp4
 (720x1280, under 9.5 MB: made again at a lower bitrate if it comes out bigger).
 """
@@ -16,7 +18,16 @@ T_COLOR, CT_COLOR, ICON_COLOR = (255, 80, 80), (153, 204, 255), (255, 150, 30)
 FEED_TIME, MAX_ROWS = 6.0, 4          # CS shows a kill for 6 seconds, 4 at most
 ICON_SCALE, FONT_SIZE, ROW_GAP = 2, 30, 8
 FEED_SCALE = 0.65                     # rows are drawn at the sizes above, then shrunk to this (about CS's own size)
-GAME_W, GAME_TOP = 1680, (1920 - 693) // 2   # gameplay width and top in the 1080x1920 frame
+# (crop of the 1920x1080 recording, gameplay width in the 1080x1920 frame), with and without the top bar hidden
+FRAMING = {True: ("1920:936:0:0", 1938), False: ("1920:792:0:144", 1680)}
+
+
+def framing(bar_hidden=True):
+    """(ffmpeg crop, gameplay width, gameplay height, gameplay top) in the 1080x1920 frame."""
+    crop, width = FRAMING[bool(bar_hidden)]
+    w, h = (int(x) for x in crop.split(":")[:2])
+    height = round(h * width / w / 2) * 2
+    return crop, width, height, (1920 - height) // 2
 DISCORD_BYTES = 9.5 * 1024 * 1024    # aim for the Discord copy; Discord's limit is 10 MiB
 DISCORD_TRIES = 3                     # encodes at most: the aimed bitrate can come out about 2% big on hard clips
 AUDIO_KBPS = 128
@@ -183,9 +194,10 @@ def discord_copy(hq, dc, length, log):
     return kbps
 
 
-def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync=None):
+def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync=None, bar_hidden=True):
     """Make out_dir/hq.mp4 and out_dir/discord.mp4 from ``raw``, recorded from demo time ``start``.
-    ``kills``: the demo's kill lines (clips.demo.scan); ``sync``: render.record's markers, for the kill feed's timing.
+    ``kills``: the demo's kill lines (clips.demo.scan); ``sync``: render.record's markers, for the kill feed's timing;
+    ``bar_hidden``: whether the spectator top bar was hidden while recording (picks the framing).
     Returns (hq path, discord path)."""
     os.makedirs(out_dir, exist_ok=True)
     length = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -196,11 +208,12 @@ def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync
         inputs = ["-i", raw, "-i", LOGO]
         for _, _, p in states:
             inputs += ["-i", p]
-        f = (f"[0:v]crop=1920:792:0:144,split=2[g1][g2];"
+        crop, game_w, _, game_top = framing(bar_hidden)
+        f = (f"[0:v]crop={crop},split=2[g1][g2];"
              f"[g1]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=40:10[bg];"
-             f"[g2]scale={GAME_W}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[b0];")
+             f"[g2]scale={game_w}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[b0];")
         for i, (s, e, _) in enumerate(states):
-            f += f"[b{i}][{i + 2}:v]overlay=0:{GAME_TOP + 12}:enable='between(t,{s:.3f},{e:.3f})'[b{i + 1}];"
+            f += f"[b{i}][{i + 2}:v]overlay=0:{game_top + 12}:enable='between(t,{s:.3f},{e:.3f})'[b{i + 1}];"
         f += (f"[1:v]scale=230:-1[logo];[b{len(states)}][logo]overlay=W-w-30:H-h-45[v];"
               f"[0:a]alimiter=limit=0.89:level=false[a]")
         hq = os.path.join(out_dir, "hq.mp4")
