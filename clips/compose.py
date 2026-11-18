@@ -20,7 +20,8 @@ GAME_W, GAME_TOP = 1680, (1920 - 693) // 2   # gameplay width and top in the 108
 DISCORD_BYTES = 9.5 * 1024 * 1024    # aim for the Discord copy; Discord's limit is 10 MiB
 DISCORD_TRIES = 3                     # encodes at most: the aimed bitrate can come out about 2% big on hard clips
 AUDIO_KBPS = 128
-KILL_FEED_DELAY = 0.46   # the game shows a kill this long after its demo time (measured)
+KILL_FEED_DELAY = 0.46   # without time markers: a kill shows this long after its demo time (old measurement)
+FEED_LEAD = 0.0          # with markers: shift from the frame a kill happens on (checked frame by frame)
 
 def hud_sprites():
     out = {}
@@ -102,9 +103,36 @@ def row_image(k, featured):
         x += sw + gap
     return img.resize((round(img.width * FEED_SCALE), round(img.height * FEED_SCALE)), Image.LANCZOS)
 
-def feed_states(kills, start, length, offset, featured, tmp):
-    """PNG overlays of the kill feed and the time range each one is on screen (clip seconds)."""
-    shown = [dict(k, at=k["t"] - start + offset) for k in kills]
+SYNC_WINDOW = 0.5        # demo seconds: markers reach the console in bursts, some up to ~0.4 s late (never early)
+
+
+def steady(sync, window=SYNC_WINDOW):
+    """``sync`` with each marker's lateness taken out: its video time becomes its demo time plus the smallest
+    (video - demo) offset among the markers within ``window`` demo seconds of it."""
+    pts = sorted(sync, key=lambda p: p[1])
+    return [(d + min(v2 - d2 for v2, d2 in pts if abs(d2 - d) <= window), d) for _, d in pts]
+
+
+def video_time(sync, t):
+    """Video time of demo time ``t``, interpolated between the (video time, demo time) markers in ``sync``; one demo
+    second per video second before the first and after the last."""
+    pts = sorted(sync, key=lambda p: p[1])
+    if t <= pts[0][1]:
+        return pts[0][0] + t - pts[0][1]
+    for (v0, d0), (v1, d1) in zip(pts, pts[1:]):
+        if t <= d1:
+            return v0 + (v1 - v0) * (t - d0) / (d1 - d0) if d1 > d0 else v1
+    return pts[-1][0] + t - pts[-1][1]
+
+
+def feed_states(kills, start, length, offset, featured, tmp, sync=None):
+    """PNG overlays of the kill feed and the time range each one is on screen (clip seconds). With ``sync`` (from
+    render.record) each kill is placed on the frame it happens on, otherwise at its demo time plus ``offset``."""
+    if sync and len(sync) >= 2:
+        sync = steady(sync)
+        shown = [dict(k, at=video_time(sync, k["t"]) + FEED_LEAD) for k in kills]
+    else:
+        shown = [dict(k, at=k["t"] - start + offset) for k in kills]
     shown = [k for k in shown if -FEED_TIME < k["at"] < length]
     edges = sorted({0.0, length} | {max(0.0, k["at"]) for k in shown} | {k["at"] + FEED_TIME for k in shown if k["at"] + FEED_TIME < length})
     states, rows_cache = [], {}
@@ -155,15 +183,16 @@ def discord_copy(hq, dc, length, log):
     return kbps
 
 
-def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY):
+def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync=None):
     """Make out_dir/hq.mp4 and out_dir/discord.mp4 from ``raw``, recorded from demo time ``start``.
-    ``kills``: the demo's kill lines (clips.demo.scan). Returns (hq path, discord path)."""
+    ``kills``: the demo's kill lines (clips.demo.scan); ``sync``: render.record's markers, for the kill feed's timing.
+    Returns (hq path, discord path)."""
     os.makedirs(out_dir, exist_ok=True)
     length = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                             "-of", "csv=p=0", raw]))
     tmp = tempfile.mkdtemp(prefix="clip-")
     try:
-        states = feed_states(kills, start, length, offset, featured, tmp)
+        states = feed_states(kills, start, length, offset, featured, tmp, sync)
         inputs = ["-i", raw, "-i", LOGO]
         for _, _, p in states:
             inputs += ["-i", p]

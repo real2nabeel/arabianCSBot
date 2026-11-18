@@ -46,7 +46,8 @@ _ANIM = re.compile(rb"\[clips\] anim t=[0-9.]+ p=(\d+) a=(\d+) b=(\d+)")
 _MSG = re.compile(rb"\[clips\] msg t=[0-9.]+ p=(\d+) n=(\w+) a=([-0-9.:,]*)")
 # One-player messages the plugin copies to HLTV: scope zoom, flashbang, grenade shake, hit indicator.
 PERSONAL_MSGS = ("SetFOV", "ScreenFade", "ScreenShake", "Damage")
-SYNC_EVERY = 0.5          # demo seconds between time markers
+SYNC_EVERY = 0.5          # demo seconds between time markers up to the moment
+SYNC_FINE = 0.1           # and during the moment: the renderer times the kill feed by them (render.record)
 # Replayed weapon animations go in this much later than their line. Watching in first person, CS takes the view model
 # from the player's weapon and restarts its animation (idle) when that model changes, after the frame's messages: a
 # draw animation sent in the same frame as the weapon switch was wiped out before it showed.
@@ -210,10 +211,11 @@ def console_text(table, text):
     return bytes([msg_id, len(payload)]) + payload if size == 255 else b""
 
 
-def follow(src, dst, entity, t0, t1, sync_until=None, commands=None):
+def follow(src, dst, entity, t0, t1, sync_until=None, commands=None, sync_end=None):
     """Copy ``src`` to ``dst`` with the camera following ``entity`` in first person from t0 to t1 (demo seconds),
-    with a time marker every SYNC_EVERY seconds before ``sync_until``, and ``commands`` = (t, "cmd;cmd") run by the
-    game when playback reaches demo time t (see the module notes). Returns the number of frames changed."""
+    with a time marker every SYNC_EVERY seconds before ``sync_until`` (then every SYNC_FINE seconds up to
+    ``sync_end``, if given), and ``commands`` = (t, "cmd;cmd") run by the game when playback reaches demo time t
+    (see the module notes). Returns the number of frames changed."""
     d = open(src, "rb").read()
     diroff, = struct.unpack_from("<i", d, HEADER_LEN - 4)
     extra = _director(entity)
@@ -235,10 +237,10 @@ def follow(src, dst, entity, t0, t1, sync_until=None, commands=None):
             if msg is not None and commands is not None and t >= commands[0]:
                 add += bytes([SVC_STUFFTEXT]) + commands[1].encode("latin1") + b"\n\x00"
                 commands = None
-            if (msg is not None and sync_until is not None and next_sync <= t < sync_until
+            if (msg is not None and sync_until is not None and next_sync <= t < max(sync_until, sync_end or 0)
                     and registered != -1 and fs > registered):
                 add += console_text(table, f"[clipsync] {t:.2f}")
-                next_sync = t + SYNC_EVERY
+                next_sync = t + (SYNC_EVERY if t < sync_until else SYNC_FINE)
             if msg is not None and t0 <= t <= t1:
                 mlen, = struct.unpack_from("<i", d, msg)
                 add += extra

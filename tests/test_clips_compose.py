@@ -83,5 +83,31 @@ class TestFeedScale(unittest.TestCase):
         self.assertEqual(compose.FEED_SCALE, 0.65)
 
 
+class TestVideoTime(unittest.TestCase):
+    # playback falling behind: 1 demo second took 2 video seconds, then normal speed
+    SYNC = [(0.6, 100.0), (2.6, 101.0), (3.6, 102.0)]
+
+    def test_interpolates_between_markers(self):
+        self.assertAlmostEqual(compose.video_time(self.SYNC, 100.5), 1.6)
+        self.assertAlmostEqual(compose.video_time(self.SYNC, 101.5), 3.1)
+
+    def test_one_to_one_outside_the_markers(self):
+        self.assertAlmostEqual(compose.video_time(self.SYNC, 99.0), -0.4)
+        self.assertAlmostEqual(compose.video_time(self.SYNC, 103.0), 4.6)
+
+    def test_steady_takes_out_late_markers(self):
+        # every other marker seen 0.4 s late
+        sync = [(t - 0.7 + (0.4 if i % 2 else 0), t) for i, t in enumerate([100.0, 100.1, 100.2, 100.3, 100.4])]
+        self.assertEqual([round(v, 2) for v, _ in compose.steady(sync)], [99.3, 99.4, 99.5, 99.6, 99.7])
+
+    def test_feed_follows_the_markers(self):
+        kill = dict(TestFeedScale.KILL, t=101.5)
+        with mock.patch.object(compose, "row_image", side_effect=lambda k, f: Image.new("RGBA", (300, 40))):
+            synced = compose.feed_states([kill], 100.0, 8.0, 0.46, 1, tempfile.mkdtemp(), sync=self.SYNC)
+            fixed = compose.feed_states([kill], 100.0, 8.0, 0.46, 1, tempfile.mkdtemp())
+        self.assertAlmostEqual(synced[0][0], 3.1 + compose.FEED_LEAD)
+        self.assertAlmostEqual(fixed[0][0], 1.96)
+
+
 if __name__ == "__main__":
     unittest.main()
