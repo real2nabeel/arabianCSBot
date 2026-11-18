@@ -124,6 +124,20 @@ def sync_content(maps):
         say(f"server content: downloaded {got} files ({size / 1e6:.0f} MB) into cstrike_downloads")
 
 
+def fetch_missing(rel):
+    """Download one file the server has added since the last content sync. True if it was downloaded."""
+    ftp = ftp_connect()
+    try:
+        _get(ftp, f"{REMOTE_DEMOS}/{rel}", os.path.join(render.HL, "cstrike_downloads", rel))
+        say(f"  downloaded {rel}, which the demo needs")
+        return True
+    except ftplib.error_perm as e:
+        say(f"  could not download {rel}: {e}")
+        return False
+    finally:
+        ftp.quit()
+
+
 def fetch():
     """Download finished demos and the last two days' lists. Returns the local demo folder."""
     demos_dir = os.path.join(WORK, "demos")
@@ -213,10 +227,12 @@ def make_clip(clip, info, done):
     followed = os.path.join(tmp_dir, "follow.dem")
     raw = os.path.join(tmp_dir, "raw.mkv")
     demo.follow(clip["demo"], followed, clip["entity"], clip["start"] - 10, clip["end"] + 2, sync_until=clip["start"],
-                commands=(clip["start"] - render.SLOW_LEAD, render.SLOW_COMMANDS))
+                commands=(clip["start"] - render.SLOW_LEAD, render.SLOW_COMMANDS), sync_end=clip["end"] + 1)
     length = clip["end"] - clip["start"]
-    took = render.record(followed, clip["start"], length, raw)
-    compose.compose(raw, info["kills"], clip["start"], out_dir + ".part", featured=clip["entity"])
+    took, sync = render.record(followed, clip["start"], length, raw)
+    if not sync:
+        say(f"  {key}: no time markers seen while recording; the kill feed uses the fixed offset")
+    compose.compose(raw, info["kills"], clip["start"], out_dir + ".part", featured=clip["entity"], sync=sync)
     meta = {k: clip[k] for k in ("key", "map", "player", "team", "score", "summary")}
     first = clip["moments"][0]
     meta.update({"date": first.get("date", ""), "round": first.get("round"), "length": round(length, 1),
@@ -314,7 +330,14 @@ def run(a):
     try:
         for c in clips[:a.limit]:
             try:
-                make_clip(c, demos[c["demo"]], done)
+                try:
+                    make_clip(c, demos[c["demo"]], done)
+                except render.RenderError as e:
+                    # Content added on the server since the daily sync: get that file and try once more.
+                    rel = render.missing_file(e)
+                    if not (rel and fetch_missing(rel)):
+                        raise
+                    make_clip(c, demos[c["demo"]], done)
                 result["made"] += 1
             except render.SteamBusy as e:
                 say(f"stopping: {e}; the next run will carry on")

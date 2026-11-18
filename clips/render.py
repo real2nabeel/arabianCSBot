@@ -13,6 +13,12 @@ re-read a config it has already run). Instead the demo copy (demo.follow) carrie
 CS prints both to qconsole.log. The renderer checks that ==SLOW== came, then starts recording when a marker says the
 moment is due (at normal speed a demo second is a real second).
 
+Playback doesn't keep exact time, though: ffmpeg starts a fraction of a second after it is asked to, and in thick smoke
+the game falls behind and then catches up (measured: up to 3 s behind). So the markers go on through the moment,
+every demo.SYNC_FINE seconds, and record() notes when each one shows while ffmpeg runs. With the clock time of
+ffmpeg's first frame (from its own log), that gives (video time, demo time) pairs: compose places each kill of the
+kill feed on the frame where it happens.
+
 Keeping the first seconds smooth: the UHD 630 draws CS and ffmpeg compresses on the same 4-core machine, and a thick
 smoke used to drop the recording to about 13 distinct frames a second. Two settings help (measured on a 1v5 clutch in
 smoke, first 7 s: 201 distinct frames before, 266 with both):
@@ -25,8 +31,10 @@ window) whether to disconnect that session, and logs "KickingOtherSession". The 
 shut down, which cancels the launch, and SteamBusy is raised so the nightly job can try again later.
 """
 import os
+import re
 import shutil
 import subprocess
+import threading
 import time
 
 from clips import demo
@@ -157,9 +165,36 @@ class _Console:
         return data.decode("latin1")
 
 
+MISSING_RE = re.compile(r"Cannot continue without \w+ ([^\s,]+)")
+
+
+def missing_file(error):
+    """The game file a failed render needs (e.g. "sprites/x.spr" from "Cannot continue without model
+    sprites/x.spr, disconnecting."), or None."""
+    m = MISSING_RE.search(str(error))
+    rel = m.group(1).replace("\\", "/") if m else None
+    return rel if rel and ".." not in rel.split("/") and not rel.startswith("/") else None
+
+
+def first_frame_clock(ffmpeg_log):
+    """The clock time of the screen recording's first frame, from ffmpeg's "Input #0, x11grab ... start: <s>" line
+    (wall-clock or monotonic seconds, depending on the ffmpeg version), or None."""
+    m = re.search(r"Input #0, x11grab.*?start: ([0-9.]+)", ffmpeg_log, re.S)
+    return float(m.group(1)) if m else None
+
+
+def sync_points(seen, first):
+    """(video time, demo time) for each marker in ``seen`` = [(wall clock, monotonic clock, demo time)], measured from
+    the first frame's clock ``first``: wall-clock if it looks like a date, monotonic otherwise."""
+    use = 0 if first > 1e9 else 1
+    return [(round(m[use] - first, 3), m[2]) for m in seen]
+
+
 def record(demo_path, start, length, out_mkv, start_timeout=400):
     """Record ``length`` seconds of ``demo_path`` from demo time ``start`` into ``out_mkv`` (1080p60 + sound).
-    The demo must come from demo.follow with sync_until=start and commands=(start - SLOW_LEAD, SLOW_COMMANDS)."""
+    The demo must come from demo.follow with sync_until=start and commands=(start - SLOW_LEAD, SLOW_COMMANDS), and
+    sync_end at the end of the moment for the kill feed's timing.
+    Returns (seconds taken, [(video time, demo time)] from the markers seen while recording; may be empty)."""
     shutil.copyfile(demo_path, os.path.join(HL, "cstrike", DEMO_NAME + ".dem"))
     write_config()
     console = os.path.join(HL, "qconsole.log")
@@ -205,12 +240,27 @@ def record(demo_path, start, length, out_mkv, start_timeout=400):
             _run("pkill", "-x", "hl_linux")
             raise RenderError(f"CS did not reach the moment within {start_timeout} s")
         time.sleep(0.05)
-    ff = _run("ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-              "-thread_queue_size", "1024", "-video_size", "1920x1080", "-framerate", "60", "-f", "x11grab", "-i", DISPLAY,
-              "-thread_queue_size", "1024", "-f", "pulse", "-i", f"{SINK}.monitor", "-t", f"{length:.2f}",
-              "-c:v", "libx264rgb", "-preset", "ultrafast", "-crf", "14", "-c:a", "pcm_s16le", out_mkv,
-              stdin=subprocess.DEVNULL)
+    ff = subprocess.Popen(["ffmpeg", "-nostdin", "-loglevel", "info", "-hide_banner", "-nostats", "-y",
+                           "-thread_queue_size", "1024", "-video_size", "1920x1080", "-framerate", "60", "-f", "x11grab",
+                           "-i", DISPLAY, "-thread_queue_size", "1024", "-f", "pulse", "-i", f"{SINK}.monitor",
+                           "-t", f"{length:.2f}", "-c:v", "libx264rgb", "-preset", "ultrafast", "-crf", "14",
+                           "-c:a", "pcm_s16le", out_mkv],
+                          env=_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                          text=True, errors="replace")
+    errors, seen = [], []
+    reader = threading.Thread(target=lambda: errors.append(ff.stderr.read()), daemon=True)
+    reader.start()
+    while ff.poll() is None:
+        text = log.new_text()
+        wall, mono = time.time(), time.monotonic()
+        lines = (tail + text).split("\n")
+        tail = lines.pop()
+        seen += [(wall, mono, float(m)) for line in lines for m in demo.SYNC_RE.findall(line)]
+        time.sleep(0.02)
+    reader.join(5)
     _run("pkill", "-x", "hl_linux")
+    ff_log = "".join(errors)
     if ff.returncode != 0 or not os.path.exists(out_mkv):
-        raise RenderError(f"ffmpeg failed: {ff.stderr.strip()[-300:]}")
-    return time.time() - began
+        raise RenderError(f"ffmpeg failed: {ff_log.strip()[-300:]}")
+    first = first_frame_clock(ff_log)
+    return time.time() - began, (sync_points(seen, first) if first is not None else [])
