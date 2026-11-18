@@ -44,7 +44,8 @@ OBS_IN_EYE = 4
 _LINE = re.compile(rb"\[clips\] (mark|round|kill) ([^\x00\n]*)")
 _ANIM = re.compile(rb"\[clips\] anim t=[0-9.]+ p=(\d+) a=(\d+) b=(\d+)")
 _MSG = re.compile(rb"\[clips\] msg t=[0-9.]+ p=(\d+) n=(\w+) a=([-0-9.:,]*)")
-# One-player messages the plugin copies to HLTV: scope zoom, flashbang, grenade shake, hit indicator.
+# One-player messages the plugin copies to HLTV that playback shows when replayed: scope zoom, flashbang, grenade
+# shake, hit indicator. (The sniper scope's crosshair and the plant/defuse bar don't show; compose draws them.)
 PERSONAL_MSGS = ("SetFOV", "ScreenFade", "ScreenShake", "Damage")
 SYNC_EVERY = 0.5          # demo seconds between time markers up to the moment
 SYNC_FINE = 0.1           # and during the moment: the renderer times the kill feed by them (render.record)
@@ -209,6 +210,36 @@ def console_text(table, text):
     msg_id, size = table["TextMsg"]
     payload = bytes([HUD_PRINTCONSOLE]) + text.encode("latin1") + b"\x00"
     return bytes([msg_id, len(payload)]) + payload if size == 255 else b""
+
+
+_FOV = re.compile(rb"\[clips\] msg t=[0-9.]+ p=(\d+) n=SetFOV a=1:(\d+)")
+_BAR = re.compile(rb"\[clips\] msg t=[0-9.]+ p=(\d+) n=(BarTime2?) a=3:(-?\d+)(?:,3:(-?\d+))?")
+
+
+def overlays(src, entity, t0, t1):
+    """What compose draws itself for ``entity`` from t0 to t1, because playback doesn't show it when replayed, from
+    the plugin's lines: {"zooms": [(demo time, fov)] (0 or 90: not zoomed; for the sniper scope's crosshair),
+    "bars": [(demo time, seconds, percent already done)] (bomb plant/defuse bar; 0 seconds: taken away)}."""
+    d = open(src, "rb").read()
+    zooms, bars, seen = [], [], set()
+    for _, offset, length in _entries(d):
+        for _, _, t, msg in _frames(d, offset, offset + length):
+            if msg is None or not t0 <= t <= t1:
+                continue
+            mlen, = struct.unpack_from("<i", d, msg)
+            body = d[msg + 4:msg + 4 + mlen]
+            if b"n=SetFOV" in body:
+                for m in _FOV.finditer(body):
+                    if int(m.group(1)) == entity and m.group(0) not in seen:   # HLTV can repeat a line
+                        seen.add(m.group(0))
+                        zooms.append((round(t, 3), int(m.group(2))))
+            if b"n=BarTime" in body:
+                for m in _BAR.finditer(body):
+                    if int(m.group(1)) == entity and m.group(0) not in seen:
+                        seen.add(m.group(0))
+                        pct = int(m.group(4) or 0) if m.group(2) == b"BarTime2" else 0
+                        bars.append((round(t, 3), int(m.group(3)), pct))
+    return {"zooms": zooms, "bars": bars}
 
 
 def follow(src, dst, entity, t0, t1, sync_until=None, commands=None, sync_end=None):
