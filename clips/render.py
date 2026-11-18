@@ -13,6 +13,13 @@ re-read a config it has already run). Instead the demo copy (demo.follow) carrie
 CS prints both to qconsole.log. The renderer checks that ==SLOW== came, then starts recording when a marker says the
 moment is due (at normal speed a demo second is a real second).
 
+Keeping the first seconds smooth: the UHD 630 draws CS and ffmpeg compresses on the same 4-core machine, and a thick
+smoke used to drop the recording to about 13 distinct frames a second. Two settings help (measured on a 1v5 clutch in
+smoke, first 7 s: 201 distinct frames before, 266 with both):
+  - fastsprites 1 draws smoke sprites more cheaply; they look the same in the clips;
+  - the screen is recorded in its own RGB format (libx264rgb), so ffmpeg skips the colour conversion while recording,
+    which halved its processor use; compose converts afterwards, where speed doesn't matter.
+
 Steam lets one account run one game at a time: if the owner is playing elsewhere, Steam asks (inside its main
 window) whether to disconnect that session, and logs "KickingOtherSession". The dialog is never answered: Steam is
 shut down, which cancels the launch, and SteamBusy is raised so the nightly job can try again later.
@@ -105,7 +112,7 @@ def _write(name, lines):
 
 def write_config():
     """clipfind.cfg: play DEMO_NAME fast-forwarding; the demo itself switches to normal speed (SLOW_COMMANDS)."""
-    _write("clipfind.cfg", [f"volume {VOLUME}", "cl_showfps 0", "fps_max 100",
+    _write("clipfind.cfg", [f"volume {VOLUME}", "cl_showfps 0", "fps_max 100", "fastsprites 1",
                             f"host_framerate {STEP}", f"playdemo {DEMO_NAME}"])
 
 
@@ -201,7 +208,7 @@ def record(demo_path, start, length, out_mkv, start_timeout=400):
     ff = _run("ffmpeg", "-nostdin", "-loglevel", "error", "-y",
               "-thread_queue_size", "1024", "-video_size", "1920x1080", "-framerate", "60", "-f", "x11grab", "-i", DISPLAY,
               "-thread_queue_size", "1024", "-f", "pulse", "-i", f"{SINK}.monitor", "-t", f"{length:.2f}",
-              "-c:v", "libx264", "-preset", "ultrafast", "-crf", "14", "-c:a", "pcm_s16le", out_mkv,
+              "-c:v", "libx264rgb", "-preset", "ultrafast", "-crf", "14", "-c:a", "pcm_s16le", out_mkv,
               stdin=subprocess.DEVNULL)
     _run("pkill", "-x", "hl_linux")
     if ff.returncode != 0 or not os.path.exists(out_mkv):

@@ -4,7 +4,7 @@ Layout from ClipsPipeline/format_clips.bat: gameplay 1680 wide over a blurred co
 The spectator bars are cropped off and the game's own kill feed (which HLTV playback can't hide and the crop cuts
 off) is replaced by ours: drawn from the demo's "[clips] kill" lines in CS style with the game's own weapon icons,
 each line on a soft dark background. Writes hq.mp4 (1080x1920 60 fps, for social media) and discord.mp4
-(720x1280, under 9.5 MB).
+(720x1280, under 9.5 MB: made again at a lower bitrate if it comes out bigger).
 """
 import os, shutil, struct, subprocess, tempfile
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -16,7 +16,9 @@ T_COLOR, CT_COLOR, ICON_COLOR = (255, 80, 80), (153, 204, 255), (255, 150, 30)
 FEED_TIME, MAX_ROWS = 6.0, 4          # CS shows a kill for 6 seconds, 4 at most
 ICON_SCALE, FONT_SIZE, ROW_GAP = 2, 30, 8
 GAME_W, GAME_TOP = 1680, (1920 - 693) // 2   # gameplay width and top in the 1080x1920 frame
-DISCORD_BYTES = 9.5 * 1024 * 1024
+DISCORD_BYTES = 9.5 * 1024 * 1024    # aim for the Discord copy; Discord's limit is 10 MiB
+DISCORD_TRIES = 3                     # encodes at most: the aimed bitrate can come out about 2% big on hard clips
+AUDIO_KBPS = 128
 KILL_FEED_DELAY = 0.46   # the game shows a kill this long after its demo time (measured)
 
 def hud_sprites():
@@ -125,6 +127,32 @@ def feed_states(kills, start, length, offset, featured, tmp):
         states.append((a, b, path))
     return states
 
+def next_kbps(kbps, size):
+    """The video bitrate for another try after a Discord copy of ``size`` bytes came out over DISCORD_BYTES:
+    lowered in proportion, plus 3% to spare (x264 overshoots hard clips by about 2%)."""
+    return max(300, int(kbps * DISCORD_BYTES / size * 0.97))
+
+
+def discord_copy(hq, dc, length, log):
+    """Make ``dc`` (720x1280) from ``hq`` in two passes, aiming at DISCORD_BYTES. A copy that comes out bigger is made
+    again at a lower bitrate, up to DISCORD_TRIES encodes in all. Returns the video bitrate used (kbps)."""
+    kbps = max(300, int((DISCORD_BYTES * 8 / length) / 1000) - AUDIO_KBPS - 40)
+    for attempt in range(DISCORD_TRIES):
+        common = ["-vf", "scale=720:1280:flags=lanczos", "-c:v", "libx264", "-preset", "medium",
+                  "-b:v", f"{kbps}k", "-pix_fmt", "yuv420p"]
+        subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", hq, *common, "-pass", "1",
+                        "-passlogfile", log, "-an", "-f", "null", "-"], check=True)
+        subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", hq, *common, "-pass", "2",
+                        "-passlogfile", log, "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-movflags", "+faststart", dc],
+                       check=True)
+        size = os.path.getsize(dc)
+        if size <= DISCORD_BYTES or kbps <= 300:
+            return kbps
+        if attempt < DISCORD_TRIES - 1:
+            kbps = next_kbps(kbps, size)
+    return kbps
+
+
 def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY):
     """Make out_dir/hq.mp4 and out_dir/discord.mp4 from ``raw``, recorded from demo time ``start``.
     ``kills``: the demo's kill lines (clips.demo.scan). Returns (hq path, discord path)."""
@@ -149,16 +177,8 @@ def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY):
                         "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "slow", "-crf", "18",
                         "-pix_fmt", "yuv420p", "-r", "60", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                         "-movflags", "+faststart", hq], check=True)
-        # Discord copy: 720x1280, two passes to land under 9.5 MB.
         dc = os.path.join(out_dir, "discord.mp4")
-        kbps = max(300, int((DISCORD_BYTES * 8 / length) / 1000) - 128 - 40)
-        common = ["-vf", "scale=720:1280:flags=lanczos", "-c:v", "libx264", "-preset", "medium",
-                  "-b:v", f"{kbps}k", "-pix_fmt", "yuv420p"]
-        log = os.path.join(tmp, "pass")
-        subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", hq, *common, "-pass", "1",
-                        "-passlogfile", log, "-an", "-f", "null", "-"], check=True)
-        subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", hq, *common, "-pass", "2",
-                        "-passlogfile", log, "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", dc], check=True)
+        discord_copy(hq, dc, length, os.path.join(tmp, "pass"))
         return hq, dc
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
