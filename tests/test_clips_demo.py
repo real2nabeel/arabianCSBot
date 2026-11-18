@@ -41,5 +41,68 @@ class TestUserMessage(unittest.TestCase):
         self.assertEqual(demo.user_messages(data), {"SetFOV": (95, 1), "Damage": (71, 12)})
 
 
+def _demo_bytes(times, table_msg, extra=None):
+    """A minimal demo: one directory entry holding a network frame at each time, then the end frame."""
+    import struct
+    frames = b""
+    for i, t in enumerate(times):
+        msg = (table_msg if i == 0 else b"") + (extra or {}).get(i, b"") + b"\x01"   # svc_nop
+        frames += struct.pack("<Bfi", 1, t, i) + b"\x00" * demo.FRAME_INFO_LEN + struct.pack("<i", len(msg)) + msg
+    frames += struct.pack("<Bfi", 5, times[-1], len(times))
+    offset = demo.HEADER_LEN
+    diroff = offset + len(frames)
+    header = bytearray(b"HLDEMO\x00\x00" + b"\x00" * (demo.HEADER_LEN - 8))
+    struct.pack_into("<i", header, demo.HEADER_LEN - 4, diroff)
+    entry = bytearray(demo.ENTRY_LEN)
+    struct.pack_into("<ii", entry, 84, offset, len(frames))
+    return bytes(header) + frames + struct.pack("<i", 1) + bytes(entry)
+
+
+class TestSyncMarkers(unittest.TestCase):
+    TEXTMSG = bytes([39, 77, 255]) + b"TextMsg\x00"
+
+    def test_console_text(self):
+        table = {"TextMsg": (77, 255)}
+        self.assertEqual(demo.console_text(table, "hi"), bytes([77, 4, 2]) + b"hi\x00")
+        self.assertEqual(demo.console_text({}, "hi"), b"")
+
+    def test_follow_adds_markers_until_the_moment(self):
+        import os
+        import re
+        import tempfile
+        times = [i * 0.25 for i in range(13)]   # 0 .. 3 s
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = os.path.join(tmp, "a.dem"), os.path.join(tmp, "b.dem")
+            open(src, "wb").write(_demo_bytes(times, self.TEXTMSG))
+            demo.follow(src, dst, entity=3, t0=10, t1=11, sync_until=2.0)
+            out = open(dst, "rb").read()
+            marks = [float(x) for x in re.findall(rb"\[clipsync\] ([0-9.]+)", out)]
+            # none in the frame that registers TextMsg, then every half second until the moment
+            self.assertEqual(marks, [0.25, 0.75, 1.25, 1.75])
+            self.assertEqual(demo.SYNC_RE.findall("x[clipsync] 1.50y"), ["1.50"])
+            demo.follow(src, dst, entity=3, t0=10, t1=11, commands=(1.0, "host_framerate 0;echo ==SLOW=="))
+            out = open(dst, "rb").read()
+            self.assertEqual(out.count(b"\x09host_framerate 0;echo ==SLOW==\n\x00"), 1)
+            # still a readable demo with the same frames
+            self.assertEqual([round(t, 2) for _, _, t, m in demo._frames(out, demo.HEADER_LEN, len(out)) if m],
+                             times)
+
+
+class TestAnimDelay(unittest.TestCase):
+    def test_animation_goes_in_a_later_frame(self):
+        import os
+        import tempfile
+        times = [i * 0.02 for i in range(20)]          # a frame every 20 ms
+        line = b"\x08[clips] anim t=5.00 p=3 a=5 b=0\x00"   # in the frame at 0.10 s
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = os.path.join(tmp, "a.dem"), os.path.join(tmp, "b.dem")
+            open(src, "wb").write(_demo_bytes(times, b"", extra={5: line}))
+            demo.follow(src, dst, entity=3, t0=0, t1=1)
+            out = open(dst, "rb").read()
+            frames = [(round(t, 2), out[m:fe]) for _, fe, t, m in demo._frames(out, demo.HEADER_LEN, len(out)) if m]
+            with_anim = [t for t, body in frames if bytes([demo.SVC_WEAPONANIM, 5, 0]) in body]
+            self.assertEqual(with_anim, [0.16])   # 0.10 + ANIM_DELAY, the first frame at or after 0.15
+
+
 if __name__ == "__main__":
     unittest.main()

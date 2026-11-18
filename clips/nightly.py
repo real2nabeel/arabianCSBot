@@ -212,7 +212,8 @@ def make_clip(clip, info, done):
     os.makedirs(tmp_dir, exist_ok=True)
     followed = os.path.join(tmp_dir, "follow.dem")
     raw = os.path.join(tmp_dir, "raw.mkv")
-    demo.follow(clip["demo"], followed, clip["entity"], clip["start"] - 10, clip["end"] + 2)
+    demo.follow(clip["demo"], followed, clip["entity"], clip["start"] - 10, clip["end"] + 2, sync_until=clip["start"],
+                commands=(clip["start"] - render.SLOW_LEAD, render.SLOW_COMMANDS))
     length = clip["end"] - clip["start"]
     took = render.record(followed, clip["start"], length, raw)
     compose.compose(raw, info["kills"], clip["start"], out_dir + ".part", featured=clip["entity"])
