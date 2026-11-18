@@ -109,5 +109,24 @@ class TestAnimDelay(unittest.TestCase):
             self.assertEqual(with_anim, [0.16])   # 0.10 + ANIM_DELAY, the first frame at or after 0.15
 
 
+class TestOverlays(unittest.TestCase):
+    def test_zooms_and_bars_of_the_followed_player(self):
+        import os
+        import tempfile
+        times = [i * 0.1 for i in range(20)]
+        lines = {3: b"\x08[clips] msg t=1.00 p=3 n=SetFOV a=1:40\x00",
+                 4: b"\x08[clips] msg t=1.00 p=3 n=SetFOV a=1:40\x00",          # HLTV repeating a line
+                 5: b"\x08[clips] msg t=1.10 p=4 n=SetFOV a=1:10\x00",          # another player
+                 8: b"\x08[clips] msg t=1.20 p=3 n=BarTime a=3:5\x00",
+                 12: b"\x08[clips] msg t=1.30 p=3 n=BarTime2 a=3:10,3:40\x00",
+                 15: b"\x08[clips] msg t=1.40 p=3 n=SetFOV a=1:90\x00"}
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "a.dem")
+            open(src, "wb").write(_demo_bytes(times, b"", extra=lines))
+            got = demo.overlays(src, entity=3, t0=0, t1=5)
+        self.assertEqual(got["zooms"], [(0.3, 40), (1.5, 90)])
+        self.assertEqual(got["bars"], [(0.8, 5, 0), (1.2, 10, 40)])
+
+
 if __name__ == "__main__":
     unittest.main()

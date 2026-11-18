@@ -176,6 +176,39 @@ def missing_file(error):
     return rel if rel and ".." not in rel.split("/") and not rel.startswith("/") else None
 
 
+# The spectator interface (resource/UI/*.res in this CS only): a see-through bar over the top 144 px of the picture
+# with the team scores, one over the bottom 144 px with the player's name. With every control hidden and sized 0 the
+# top bar is gone, so compose keeps the top of the picture; the bottom band is drawn by the game's code and stays.
+SPECTATOR_UI = ("Spectator.res", "BottomSpectator.res")
+HIDDEN_MARK = "// clips: spectator interface hidden (clips/render.py)"
+
+
+def hidden_ui(text):
+    """A .res layout with every control made invisible and 0 tall."""
+    text = re.sub(r'("visible"\s+)"1"', r'\1"0"', text)
+    text = re.sub(r'("tall"\s+)"\d+"', r'\1"0"', text)
+    return text.rstrip() + "\n" + HIDDEN_MARK + "\n"
+
+
+def hide_spectator_bar():
+    """Hide the spectator interface in this CS's layout files, before each recording (a game update puts the
+    originals back; they are kept as *.orig). True if the top bar is hidden."""
+    ok = True
+    for name in SPECTATOR_UI:
+        path = os.path.join(HL, "cstrike", "resource", "UI", name)
+        try:
+            text = open(path, encoding="latin1").read()
+            if HIDDEN_MARK not in text:
+                with open(path + ".orig", "w", encoding="latin1") as fh:
+                    fh.write(text)
+                with open(path + ".tmp", "w", encoding="latin1") as fh:
+                    fh.write(hidden_ui(text))
+                os.replace(path + ".tmp", path)
+        except OSError:
+            ok = ok and name != "Spectator.res"
+    return ok
+
+
 def first_frame_clock(ffmpeg_log):
     """The clock time of the screen recording's first frame, from ffmpeg's "Input #0, x11grab ... start: <s>" line
     (wall-clock or monotonic seconds, depending on the ffmpeg version), or None."""

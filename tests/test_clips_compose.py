@@ -109,5 +109,46 @@ class TestVideoTime(unittest.TestCase):
         self.assertAlmostEqual(fixed[0][0], 1.96)
 
 
+class TestFraming(unittest.TestCase):
+    def test_bar_hidden_matches_the_old_clips_height(self):
+        crop, width, height, top = compose.framing(True)
+        self.assertEqual(crop, "1920:936:0:0")             # only the bottom band cropped
+        self.assertEqual(height, 944)                      # old clips: 1920x1080 at 1680 wide -> 945
+        self.assertEqual(top, (1920 - 944) // 2)
+        self.assertGreater(width, 1080)                    # the sides are cut off, as before
+
+    def test_fallback_crops_both_bars(self):
+        self.assertEqual(compose.framing(False), ("1920:792:0:144", 1680, 692, 614))
+
+
+class TestScopeAndBar(unittest.TestCase):
+    def test_scope_ranges(self):
+        zooms = [(100.0, 90), (101.0, 40), (101.5, 10), (103.0, 90), (104.0, 55), (105.0, 0), (106.0, 40)]
+        ranges = compose.scope_ranges(zooms, 7.0, lambda t: t - 100.0)
+        # 40 then 10 is one scoped stretch; the AUG/SG552 zoom (55) has no scope; still scoped at the end
+        self.assertEqual(ranges, [(1.0, 3.0), (6.0, 7.0)])
+
+    def test_scope_ranges_clipped_to_the_clip(self):
+        self.assertEqual(compose.scope_ranges([(95.0, 40), (102.0, 90)], 5.0, lambda t: t - 100.0), [(0.0, 2.0)])
+        self.assertEqual(compose.scope_ranges([(90.0, 40), (95.0, 90)], 5.0, lambda t: t - 100.0), [])
+
+    def test_bar_ranges(self):
+        # a 10 s defuse cancelled after 2 s, then a 5 s defuse with a kit, then a plant past the end of the clip
+        bars = [(100.0, 10, 0), (102.0, 0, 0), (103.0, 5, 0), (110.0, 3, 0)]
+        self.assertEqual(compose.bar_ranges(bars, 9.0, lambda t: t - 100.0), [(0.0, 2.0, 10, 0), (3.0, 8.0, 5, 0)])
+
+    def test_bar_resumed_partway(self):
+        # BarTime2: 10 s bar, 40% already done -> 6 s left
+        self.assertEqual(compose.bar_ranges([(100.0, 10, 40)], 20.0, lambda t: t - 100.0), [(0.0, 6.0, 10, 40)])
+
+    def test_bar_images(self):
+        frame_png, fill_png = compose.bar_images(tempfile.mkdtemp())
+        with Image.open(frame_png) as frame, Image.open(fill_png) as fill:
+            self.assertEqual(frame.size, (compose.BAR_W, compose.BAR_H))
+            self.assertEqual(fill.width, 2 * compose.BAR_W)
+            self.assertEqual(fill.getpixel((10, 2))[3], 255)                    # left half filled
+            self.assertEqual(fill.getpixel((compose.BAR_W + 10, 2))[3], 0)      # right half see-through
+
+
 if __name__ == "__main__":
     unittest.main()

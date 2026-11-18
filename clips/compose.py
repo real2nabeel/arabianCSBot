@@ -1,8 +1,10 @@
 """Turning a raw 1920x1080 spectator recording into the finished clip files.
 
-Layout from ClipsPipeline/format_clips.bat: gameplay 1680 wide over a blurred copy, logo 230 px bottom-right.
-The spectator bars are cropped off and the game's own kill feed (which HLTV playback can't hide and the crop cuts
-off) is replaced by ours: drawn from the demo's "[clips] kill" lines in CS style with the game's own weapon icons,
+Layout from ClipsPipeline/format_clips.bat: gameplay over a blurred copy, logo 230 px bottom-right. Those clips were
+a player's own screen, gameplay 1680 wide and so 945 tall. HLTV playback adds spectator bars: the renderer hides the
+top one (render.hide_spectator_bar), the bottom one is cropped off, and the rest is zoomed to the same 945 height
+(1938 wide, a little more of the sides cut off). If the top bar couldn't be hidden, both bars are cropped and the
+gameplay is 1680 wide (693 tall). The game's own kill feed (which HLTV playback can't hide) is replaced by ours: drawn from the demo's "[clips] kill" lines in CS style with the game's own weapon icons,
 each line on a soft dark background. Writes hq.mp4 (1080x1920 60 fps, for social media) and discord.mp4
 (720x1280, under 9.5 MB: made again at a lower bitrate if it comes out bigger).
 """
@@ -16,7 +18,16 @@ T_COLOR, CT_COLOR, ICON_COLOR = (255, 80, 80), (153, 204, 255), (255, 150, 30)
 FEED_TIME, MAX_ROWS = 6.0, 4          # CS shows a kill for 6 seconds, 4 at most
 ICON_SCALE, FONT_SIZE, ROW_GAP = 2, 30, 8
 FEED_SCALE = 0.65                     # rows are drawn at the sizes above, then shrunk to this (about CS's own size)
-GAME_W, GAME_TOP = 1680, (1920 - 693) // 2   # gameplay width and top in the 1080x1920 frame
+# (crop of the 1920x1080 recording, gameplay width in the 1080x1920 frame), with and without the top bar hidden
+FRAMING = {True: ("1920:936:0:0", 1938), False: ("1920:792:0:144", 1680)}
+
+
+def framing(bar_hidden=True):
+    """(ffmpeg crop, gameplay width, gameplay height, gameplay top) in the 1080x1920 frame."""
+    crop, width = FRAMING[bool(bar_hidden)]
+    w, h = (int(x) for x in crop.split(":")[:2])
+    height = round(h * width / w / 2) * 2
+    return crop, width, height, (1920 - height) // 2
 DISCORD_BYTES = 9.5 * 1024 * 1024    # aim for the Discord copy; Discord's limit is 10 MiB
 DISCORD_TRIES = 3                     # encodes at most: the aimed bitrate can come out about 2% big on hard clips
 AUDIO_KBPS = 128
@@ -45,6 +56,78 @@ def sprite(name):
         img.putdata([(pal[i * 3] * 299 + pal[i * 3 + 1] * 587 + pal[i * 3 + 2] * 114) // 1000 for i in d[p:p + w * h]])
         _sprites[name] = img
     return _sprites[name]
+
+SCOPE_FOV = 40   # zoomed at or below this: AWP, Scout, G3SG1, SG550 (the AUG and SG552 zoom to 55, with no scope)
+
+
+def scope_image():
+    """The sniper scope's dotted crosshair with the red centre dot (sprites/sniper_scope.spr, 256x256, colour index
+    255 see-through), as RGBA. CS swaps it in for the player who scopes in, but not in HLTV playback: compose draws it
+    over the recording, 1:1 at the centre of the screen as the game does."""
+    d = open(os.path.join(HL, "sprites", "sniper_scope.spr"), "rb").read()
+    assert d[:4] == b"IDSP"
+    p = 40
+    n, = struct.unpack_from("<h", d, p); p += 2
+    pal = d[p:p + n * 3]; p += n * 3 + 4
+    _, _, w, h = struct.unpack_from("<iiii", d, p); p += 16
+    px = d[p:p + w * h]
+    img = Image.frombytes("P", (w, h), px)
+    img.putpalette(pal)
+    rgba = img.convert("RGBA")
+    rgba.putalpha(Image.frombytes("L", (w, h), bytes(0 if i == 255 else 255 for i in px)))
+    return rgba
+
+
+def scope_ranges(zooms, length, to_video):
+    """Video time ranges with the player scoped in, from the demo's (demo time, fov) zoom changes (clips.demo.overlays;
+    fov 0 or 90 = not zoomed)."""
+    out, since = [], None
+    for t, fov in sorted(zooms):
+        scoped = 0 < fov <= SCOPE_FOV
+        if scoped and since is None:
+            since = to_video(t)
+        elif not scoped and since is not None:
+            out.append((since, to_video(t)))
+            since = None
+    if since is not None:
+        out.append((since, length))
+    return [(max(0.0, a), min(length, b)) for a, b in out if b > 0 and a < length and b > a]
+
+
+# CS's plant/defuse progress bar, in screen pixels of the 1920x1080 recording: the middle half of the screen, two
+# thirds of the way down, an orange fill growing from the left inside a thin outline.
+BAR_X, BAR_Y, BAR_W, BAR_H = 480, 720, 960, 12
+BAR_FILL, BAR_EDGE = (255, 140, 0, 255), (255, 140, 0, 160)
+
+
+def bar_ranges(bars, length, to_video):
+    """(video start, video end, seconds, percent at start) for each progress bar shown in the clip, from
+    clips.demo.overlays: a bar lasts its seconds, or until the next one (0 seconds = taken away)."""
+    bars = sorted(bars)
+    out = []
+    for i, (t, secs, pct) in enumerate(bars):
+        if secs <= 0:
+            continue
+        end = t + secs * (100 - pct) / 100
+        if i + 1 < len(bars):
+            end = min(end, bars[i + 1][0])
+        a, b = to_video(t), to_video(end)
+        if b > 0 and a < length:
+            out.append((a, min(b, length), secs, pct))
+    return out
+
+
+def bar_images(tmp):
+    """The bar's outline (BAR_W x BAR_H) and a fill strip twice as wide (the left half filled): cropping a BAR_W
+    window that slides from the right half to the left one shows the fill growing from the left."""
+    frame = Image.new("RGBA", (BAR_W, BAR_H), (0, 0, 0, 110))
+    ImageDraw.Draw(frame).rectangle((0, 0, BAR_W - 1, BAR_H - 1), outline=BAR_EDGE, width=2)
+    strip = Image.new("RGBA", (2 * BAR_W, BAR_H - 6), (0, 0, 0, 0))
+    ImageDraw.Draw(strip).rectangle((0, 0, BAR_W - 7, BAR_H - 7), fill=BAR_FILL)
+    paths = os.path.join(tmp, "bar_frame.png"), os.path.join(tmp, "bar_fill.png")
+    frame.save(paths[0]); strip.save(paths[1])
+    return paths
+
 
 HUD = None
 def icon(key):
@@ -183,9 +266,13 @@ def discord_copy(hq, dc, length, log):
     return kbps
 
 
-def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync=None):
+def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync=None, bar_hidden=True,
+            zooms=(), bars=()):
     """Make out_dir/hq.mp4 and out_dir/discord.mp4 from ``raw``, recorded from demo time ``start``.
-    ``kills``: the demo's kill lines (clips.demo.scan); ``sync``: render.record's markers, for the kill feed's timing.
+    ``kills``: the demo's kill lines (clips.demo.scan); ``sync``: render.record's markers, for the kill feed's timing;
+    ``bar_hidden``: whether the spectator top bar was hidden while recording (picks the framing); ``zooms``: the
+    player's (demo time, fov) zoom changes (clips.demo.overlays), for the sniper scope's crosshair; ``bars``: the
+    player's plant/defuse progress bars (clips.demo.overlays).
     Returns (hq path, discord path)."""
     os.makedirs(out_dir, exist_ok=True)
     length = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -196,16 +283,38 @@ def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync
         inputs = ["-i", raw, "-i", LOGO]
         for _, _, p in states:
             inputs += ["-i", p]
-        f = (f"[0:v]crop=1920:792:0:144,split=2[g1][g2];"
+        crop, game_w, _, game_top = framing(bar_hidden)
+        steady_sync = steady(sync) if sync and len(sync) >= 2 else None
+        to_video = (lambda t: video_time(steady_sync, t)) if steady_sync else (lambda t: t - start)
+        scoped = scope_ranges(zooms, length, to_video)
+        shown_bars = bar_ranges(bars, length, to_video)
+        f, last, n = "", "0:v", len(states) + 2      # n: the next input number
+        if scoped:
+            scope = os.path.join(tmp, "scope.png")
+            scope_image().save(scope)
+            inputs += ["-i", scope]
+            on = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in scoped)
+            f += f"[{last}][{n}:v]overlay=(W-w)/2:(H-h)/2:enable='{on}'[sc];"
+            last, n = "sc", n + 1
+        if shown_bars:
+            frame_png, fill_png = bar_images(tmp)
+            for i, (a, b, secs, pct) in enumerate(shown_bars):
+                inputs += ["-loop", "1", "-i", frame_png, "-loop", "1", "-i", fill_png]
+                done = f"({pct}/100+(t-{a:.3f})/{secs * 1.0:.3f})"
+                f += (f"[{n + 1}:v]crop={BAR_W}:{BAR_H - 6}:x='{BAR_W}*(1-min(1,max(0,{done})))':y=0[fill{i}];"
+                      f"[{last}][{n}:v]overlay={BAR_X}:{BAR_Y}:enable='between(t,{a:.3f},{b:.3f})'[bf{i}];"
+                      f"[bf{i}][fill{i}]overlay={BAR_X + 3}:{BAR_Y + 3}:enable='between(t,{a:.3f},{b:.3f})'[bar{i}];")
+                last, n = f"bar{i}", n + 2
+        f += (f"[{last}]crop={crop},split=2[g1][g2];"
              f"[g1]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=40:10[bg];"
-             f"[g2]scale={GAME_W}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[b0];")
+             f"[g2]scale={game_w}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[b0];")
         for i, (s, e, _) in enumerate(states):
-            f += f"[b{i}][{i + 2}:v]overlay=0:{GAME_TOP + 12}:enable='between(t,{s:.3f},{e:.3f})'[b{i + 1}];"
+            f += f"[b{i}][{i + 2}:v]overlay=0:{game_top + 12}:enable='between(t,{s:.3f},{e:.3f})'[b{i + 1}];"
         f += (f"[1:v]scale=230:-1[logo];[b{len(states)}][logo]overlay=W-w-30:H-h-45[v];"
               f"[0:a]alimiter=limit=0.89:level=false[a]")
         hq = os.path.join(out_dir, "hq.mp4")
         subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", *inputs, "-filter_complex", f,
-                        "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+                        "-map", "[v]", "-map", "[a]", "-t", f"{length:.3f}", "-c:v", "libx264", "-preset", "slow", "-crf", "18",
                         "-pix_fmt", "yuv420p", "-r", "60", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                         "-movflags", "+faststart", hq], check=True)
         dc = os.path.join(out_dir, "discord.mp4")

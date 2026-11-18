@@ -37,5 +37,36 @@ class TestMissingFile(unittest.TestCase):
         self.assertIsNone(render.missing_file("Cannot continue without model /etc/passwd, disconnecting."))
 
 
+class TestHideSpectatorBar(unittest.TestCase):
+    RES = ('"Resource/UI/SpectatorGUI.res"\n{\n\t"TopBar"\n\t{\n\t\t"visible"\t\t"1"\n\t\t"tall"\t\t\t"66"\n'
+           '\t\t"enabled"\t\t"0"\n\t}\n}\n')
+
+    def test_hidden_ui(self):
+        out = render.hidden_ui(self.RES)
+        self.assertIn('"visible"\t\t"0"', out)
+        self.assertIn('"tall"\t\t\t"0"', out)
+        self.assertIn('"enabled"\t\t"0"', out)
+        self.assertTrue(out.rstrip().endswith(render.HIDDEN_MARK))
+
+    def test_patches_once_and_keeps_the_original(self):
+        import os
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as hl:
+            ui = os.path.join(hl, "cstrike", "resource", "UI")
+            os.makedirs(ui)
+            for name in render.SPECTATOR_UI:
+                with open(os.path.join(ui, name), "w", encoding="latin1") as fh:
+                    fh.write(self.RES)
+            with mock.patch.object(render, "HL", hl):
+                self.assertTrue(render.hide_spectator_bar())
+                first = open(os.path.join(ui, "Spectator.res"), encoding="latin1").read()
+                self.assertTrue(render.hide_spectator_bar())      # already hidden: unchanged
+                self.assertEqual(open(os.path.join(ui, "Spectator.res"), encoding="latin1").read(), first)
+                self.assertEqual(open(os.path.join(ui, "Spectator.res.orig"), encoding="latin1").read(), self.RES)
+                os.remove(os.path.join(ui, "Spectator.res"))
+                self.assertFalse(render.hide_spectator_bar())     # no layout file: the bar can't be hidden
+
+
 if __name__ == "__main__":
     unittest.main()
