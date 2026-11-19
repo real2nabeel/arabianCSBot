@@ -1,14 +1,106 @@
 """Clip posting decisions. Pure functions (no Discord, no DB), unit-tested in tests/test_clips.py."""
 import datetime as dt
+import zlib
 
 APPROVE = "👍"
 REJECT = "❌"
 
+# ---- post text ------------------------------------------------------------------------------------------------------
+# Search on YouTube, Instagram and TikTok reads the caption, and only its first line shows under the video, so the
+# first line ("hook") says what happened with a number and the words people search for (CS 1.6, Dust2, clutch, ace).
+# The player is credited further down. Each kind of moment has a few phrasings; a clip always gets the same one
+# (picked from its id), so a retried post keeps its text, and the daily posts don't all read alike.
+WEAPON_WORDS = {"ak47": "AK-47", "m4a1": "M4A1", "awp": "AWP", "deagle": "Deagle", "knife": "knife", "usp": "USP",
+                "glock18": "Glock", "scout": "Scout", "famas": "FAMAS", "galil": "Galil", "mp5navy": "MP5",
+                "p90": "P90", "hegrenade": "grenade", "m3": "M3", "xm1014": "XM1014", "aug": "AUG", "sg552": "SG 552",
+                "g3sg1": "G3SG1", "sg550": "SG 550", "elite": "Dual Berettas", "fiveseven": "Five-SeveN",
+                "p228": "P228", "tmp": "TMP", "mac10": "MAC-10", "ump45": "UMP45", "m249": "M249"}
+
+HOOKS = {
+    "clutch": ["CS 1.6 – 1v{n} clutch with {k} kills", "1v{n} clutch on Dust2 – CS 1.6",
+               "Last one alive in a 1v{n} – CS 1.6 clutch"],
+    "ace": ["CS 1.6 ace in {s} seconds", "Full ace on Dust2 in {s} seconds – CS 1.6",
+            "5 kills, one round – CS 1.6 ace"],
+    "ace_weapon": ["{W} ace in {s} seconds – CS 1.6", "CS 1.6 {W} ace on Dust2", "Full {W} ace in {s} seconds – CS 1.6"],
+    "knife": ["{k} knife kills in {s} seconds", "{k} knife kills, {s} seconds – CS 1.6",
+              "Knife only: {k} kills in {s} seconds – CS 1.6"],
+    "weapon": ["{k} {W} kills in {s} seconds – CS 1.6", "{W} {k}K in {s} seconds – CS 1.6 Dust2",
+               "{k} kills with the {W} in {s} seconds"],
+    "multikill": ["{k} kills in {s} seconds – CS 1.6", "{k}K in {s} seconds on Dust2 – CS 1.6",
+                  "{k} kills, {s} seconds – CS 1.6 Dust2"],
+    "untimed": ["{k} kills – CS 1.6 Dust2", "{k}K on Dust2 – CS 1.6"],
+    "noscope": ["No-scope {W} kill – CS 1.6", "No scope, no problem – CS 1.6 {W}"],
+    "double": ["One shot, two kills – CS 1.6 {W}", "Two kills, one bullet – CS 1.6"],
+    "air": ["Mid-air kill – CS 1.6", "Killed while flying – CS 1.6"],
+    "single": ["{W} kill – CS 1.6 Dust2"],
+}
+QUESTIONS = {
+    "clutch": ["Could you clutch this?", "Would you have won this 1v{n}?", "What would you have done here?"],
+    "kills": ["Rate this from 1 to 10.", "Could you do this?", "How many would you have got?"],
+    "special": ["Skill or luck?", "Rate this from 1 to 10."],
+}
+TAGS = {"clutch": "#clutch", "ace": "#ace", "knife": "#knife", "awp": "#awp", "kills": "#multikill"}
+
+
+def _main_moment(meta):
+    moments = meta.get("moments") or []
+    return max(moments, key=lambda m: m.get("score", 0)) if moments else None
+
+
+def _pick(options, meta, salt=""):
+    key = f"{meta.get('key', '')}{salt}"
+    return options[zlib.crc32(key.encode()) % len(options)]
+
+
+def _seconds(span):
+    return f"{span:.1f}".rstrip("0").rstrip(".")
+
+
+def moment_text(meta):
+    """(hook, question, hashtag) for a clip, from its best moment. Falls back to the old "player – summary"."""
+    m = _main_moment(meta)
+    if not m:
+        return f"{meta.get('player', '')} – {meta.get('summary', '')}", "", ""
+    kind = m.get("type")
+    k = int(m.get("kills") or 0)
+    n = int(m.get("enemies") or 0)
+    weapons = (m.get("weapons") or "").split()
+    tags = set((m.get("extra") or "").split())
+    one = WEAPON_WORDS.get(weapons[0], weapons[0].upper()) if weapons and len(set(weapons)) == 1 else ""
+    span = float(m.get("end") or 0) - float(m.get("start") or 0)
+    if kind == "clutch":
+        group, ask, tag = "clutch", "clutch", "clutch"
+    elif kind == "multikill" and k >= 5:
+        group, ask, tag = ("ace_weapon" if one and one != "knife" else "ace"), "kills", "ace"
+    elif kind == "multikill" and span <= 0:
+        group, ask, tag = "untimed", "kills", "kills"
+    elif kind == "multikill":
+        group = "knife" if one == "knife" else ("weapon" if one else "multikill")
+        ask, tag = "kills", ("knife" if one == "knife" else "awp" if one == "AWP" else "kills")
+    elif "noscope" in tags:
+        group, ask, tag = "noscope", "special", "awp"
+    elif "double" in tags:
+        group, ask, tag = "double", "special", ("awp" if one == "AWP" else "kills")
+    elif "air" in tags:
+        group, ask, tag = "air", "special", ""
+    else:
+        group, ask, tag = "single", "special", ("knife" if one == "knife" else "")
+    values = {"k": k, "n": n, "s": _seconds(span), "W": one or "weapon"}
+    hook = _pick(HOOKS[group], meta).format(**values)
+    hook = hook[0].upper() + hook[1:]
+    question = _pick(QUESTIONS[ask], meta, "q").format(**values)
+    return hook, question, TAGS.get(tag, "")
+
 
 def caption(meta, template, server, hashtags):
-    """Post text for a clip. Unknown {fields} in the template are left as they are."""
-    values = {"player": meta.get("player", ""), "summary": meta.get("summary", ""),
-              "map": meta.get("map", ""), "server": server, "hashtags": hashtags}
+    """Post text for a clip. Template fields: {hook}, {question}, {player}, {server}, {hashtags} (the given ones
+    plus one for the kind of moment), and the older {summary} and {map}. Unknown {fields} are left as they are."""
+    hook, question, tag = moment_text(meta)
+    tags = hashtags.split()
+    if tag and tag.lower() not in (t.lower() for t in tags):
+        tags.insert(min(3, len(tags)), tag)
+    values = {"player": meta.get("player", ""), "summary": meta.get("summary", ""), "map": meta.get("map", ""),
+              "server": server, "hashtags": " ".join(tags), "hook": hook, "question": question}
 
     class Keep(dict):
         def __missing__(self, key):
@@ -17,10 +109,9 @@ def caption(meta, template, server, hashtags):
 
 
 def title(meta, limit=100):
-    """Short title (YouTube): "Name – 4 kills in 2.1 s #Shorts", trimmed to ``limit`` characters."""
-    tail = " #Shorts"
-    text = f"{meta.get('player', '')} – {meta.get('summary', '')}"
-    return text[:limit - len(tail)].rstrip() + tail
+    """Short title (YouTube): the caption's first line ("1v4 clutch on Dust2 – CS 1.6"), at most ``limit``
+    characters. YouTube shows it in the feed and searches it, so the keywords come first."""
+    return moment_text(meta)[0][:limit].rstrip()
 
 
 def parse_hours(spec):
