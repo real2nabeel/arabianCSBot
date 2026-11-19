@@ -37,12 +37,16 @@ HLTV "arabian-servers.com 2013" -> clips-*.dem ─┴─ FTP ─> clips/nightly.
    `cstrike/resource/cstrike_english.txt` (UTF-16) set `"Cstrike_TitlesTXT_Spec_Duck"` to `""`.
 4. `~/clips/ftp.env` with the game server's FTP login (`remote_host=`, `port=`, `username=`, `pass=`), readable only by you.
 5. Cron (`crontab -e`): the lines in `host/crontab.txt`. One checks every minute for a `/clips-run` request
-   (a run with nothing requested exits at once); the other downloads new demos every hour without rendering,
-   because the game server deletes its demos after a day. `mkdir -p ~/clips/control`.
+   (a run with nothing requested exits at once); one downloads new demos every hour without rendering,
+   because the game server deletes its demos after a day; and one makes the day's 20 best new clips at 06:00
+   (the machine's clock is on Palestine time, `Asia/Gaza`, so cron follows its summer and winter time).
+   `mkdir -p ~/clips/control`.
 6. In the bot's `.env`: the `CLIPS_*` and `META_*` settings (see `.env.example`), including
    `CLIPS_CONTROL_HOST_DIR=/home/<you>/clips/control`, then recreate the container (`docker compose up -d --build`).
 
-Start a run from Discord with `/clips-run` (clip reviewers only); the result is posted in the review channel.
+Clips are made every morning at 06:00 Palestine time (the 20 best new ones; at about 100 a day, the rest are
+dropped with their demos after 4 days). Start an extra run from Discord with `/clips-run` (clip reviewers only);
+the result is posted in the review channel. The 06:00 run posts only the clips themselves.
 By hand: `python3 -m clips.nightly --dry-run` lists what it would make; without `--dry-run` it makes them.
 Log: `~/clips/nightly.log`.
 
