@@ -57,4 +57,5 @@ Log: `~/clips/nightly.log`.
   download them and CS stops with "Cannot continue without model ...". If CS fails to load a demo, the clip
   fails with that console line instead of recording the error screen.
 - `playdemo` resets the volume and some HUD settings, so `render.py` sets them again after the fast-forward.
+- Picture brightness is set in `clipfind.cfg` before `playdemo`, because CS builds a map's lighting when it loads: `brightness 1.77`, `gamma 2.76` (about 90% on the video sliders; change with `CLIPS_BRIGHTNESS` / `CLIPS_GAMMA` in the host's environment). The game's own defaults, 0 and 2.2, made clips darker than the game looks to players.
 - The kill feed appears 0.46 s after a kill's demo time (`compose.KILL_FEED_DELAY`, measured).

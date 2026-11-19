@@ -43,6 +43,11 @@ HL = os.path.expanduser(os.environ.get("CLIPS_HL_DIR", "~/.steam/debian-installa
 DISPLAY = os.environ.get("CLIPS_DISPLAY", ":98")
 SINK = os.environ.get("CLIPS_SINK", "clips")
 VOLUME = os.environ.get("CLIPS_VOLUME", "0.5")
+# Picture brightness, as in the game's video options. CS builds a map's lighting when it loads, so these are set
+# before playdemo. Defaults are Nabeel's own settings (about 90% on the sliders); the game's own are 0 and 2.2,
+# which made clips darker than the game looks to players.
+BRIGHTNESS = os.environ.get("CLIPS_BRIGHTNESS", "1.77")
+GAMMA = os.environ.get("CLIPS_GAMMA", "2.76")
 STEP = 0.25            # host_framerate while fast-forwarding (asked-for demo seconds per frame)
 SLOW_LEAD = 15.0       # switch to normal speed this many demo seconds before the moment
 SLOW_COMMANDS = f"host_framerate 0;stopsound;volume {VOLUME};hud_deathnotice_time 0;cl_showfps 0;echo ==SLOW=="
@@ -121,6 +126,7 @@ def _write(name, lines):
 def write_config():
     """clipfind.cfg: play DEMO_NAME fast-forwarding; the demo itself switches to normal speed (SLOW_COMMANDS)."""
     _write("clipfind.cfg", [f"volume {VOLUME}", "cl_showfps 0", "fps_max 100", "fastsprites 1",
+                            f"brightness {BRIGHTNESS}", f"gamma {GAMMA}",
                             f"host_framerate {STEP}", f"playdemo {DEMO_NAME}"])
 
 
