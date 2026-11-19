@@ -5,7 +5,8 @@
 3. Record each one with sound (clips.render) and make the two video files (clips.compose).
 4. Write CLIPS_OUT/<key>/{hq.mp4, discord.mp4, meta.json}. The bot picks those up and posts them for review.
 
-Normally started from Discord: /clips-run (cogs/clips.py) writes CONTROL/request.json, and cron runs
+Cron makes the 20 best new clips every day at 06:00 (Palestine time, the machine's clock). Extra runs come from
+Discord: /clips-run (cogs/clips.py) writes CONTROL/request.json, and cron runs
 `python3 -m clips.nightly --if-requested` every minute, which does nothing unless that file exists. The result goes
 to CONTROL/status.json, which the bot reports in the review channel. A lock stops overlapping runs, finished
 clips are remembered in WORK/done.json, and if Steam is busy because the owner is playing, the run stops.
