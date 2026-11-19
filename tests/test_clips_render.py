@@ -68,5 +68,22 @@ class TestHideSpectatorBar(unittest.TestCase):
                 self.assertFalse(render.hide_spectator_bar())     # no layout file: the bar can't be hidden
 
 
+class TestWriteConfig(unittest.TestCase):
+    def test_brightness_is_set_before_the_demo_loads(self):
+        import os
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as hl:
+            os.makedirs(os.path.join(hl, "cstrike"))
+            with mock.patch.object(render, "HL", hl), mock.patch.object(render, "BRIGHTNESS", "1.5"), \
+                    mock.patch.object(render, "GAMMA", "2.6"):
+                render.write_config()
+            with open(os.path.join(hl, "cstrike", "clipfind.cfg")) as fh:
+                lines = fh.read().splitlines()
+        self.assertIn("brightness 1.5", lines)
+        self.assertIn("gamma 2.6", lines)
+        self.assertLess(lines.index("gamma 2.6"), lines.index("playdemo " + render.DEMO_NAME))
+
+
 if __name__ == "__main__":
     unittest.main()
