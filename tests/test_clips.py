@@ -15,10 +15,55 @@ class TestText(unittest.TestCase):
     def test_unknown_fields_are_kept(self):
         self.assertEqual(clips.caption(META, "{player} {oops}", "", ""), "Ace {oops}")
 
-    def test_title_is_trimmed(self):
-        t = clips.title({"player": "A" * 120, "summary": "x"})
-        self.assertEqual(len(t), 100)
-        self.assertTrue(t.endswith(" #Shorts"))
+    def test_title_without_moments_falls_back(self):
+        self.assertEqual(clips.title(META), "Ace – 4 kills in 2.1 s")
+        self.assertEqual(len(clips.title({"player": "A" * 120, "summary": "x"})), 100)
+
+
+def moment(**kw):
+    m = {"type": "multikill", "kills": 4, "headshots": 2, "weapons": "knife knife knife knife", "extra": "",
+         "score": 125, "enemies": 0, "start": 27.01, "end": 34.88}
+    m.update(kw)
+    return m
+
+
+def clip(key="2026-11-18_232849-2", **kw):
+    return {"key": key, "player": "Melo", "summary": "4 kills", "map": "de_dust2", "moments": [moment(**kw)]}
+
+
+class TestMomentText(unittest.TestCase):
+    def hooks(self, **kw):
+        """Every phrasing this kind of clip can get (over many clip ids)."""
+        return {clips.moment_text(clip(f"k{i}", **kw))[0] for i in range(60)}
+
+    def test_knife_multikill(self):
+        self.assertEqual(self.hooks(), {"4 knife kills in 7.9 seconds", "4 knife kills, 7.9 seconds – CS 1.6",
+                                        "Knife only: 4 kills in 7.9 seconds – CS 1.6"})
+
+    def test_clutch_ace_and_specials(self):
+        self.assertIn("1v4 clutch on Dust2 – CS 1.6", self.hooks(type="clutch", enemies=4, kills=4, weapons=""))
+        self.assertIn("AWP ace in 4.9 seconds – CS 1.6", self.hooks(kills=5, weapons="awp " * 5, start=0, end=4.9))
+        self.assertIn("No-scope AWP kill – CS 1.6", self.hooks(type="special", kills=1, weapons="awp", extra="noscope"))
+        self.assertIn("4 kills in 7.9 seconds – CS 1.6", self.hooks(weapons="ak47 ak47 deagle m4a1"))
+
+    def test_same_clip_same_text_and_no_emojis(self):
+        a = clips.moment_text(clip())
+        self.assertEqual(a, clips.moment_text(clip()))
+        self.assertEqual(a[2], "#knife")
+        for i in range(60):
+            for text in clips.moment_text(clip(f"k{i}", type="clutch", enemies=3, kills=2)):
+                self.assertTrue(all(ord(ch) < 0x2000 or ch == "–" for ch in text), text)
+
+    def test_caption_adds_the_moment_hashtag_once(self):
+        template = "{hook}\n{question}\n\n{player}\nconnect {server}\n\n{hashtags}"
+        text = clips.caption(clip(), template, "1.2.3.4:27015", "#cs16 #counterstrike #dust2 #كاونتر_سترايك")
+        lines = text.split("\n")
+        self.assertEqual(lines[0], clips.moment_text(clip())[0])
+        self.assertEqual(lines[-1], "#cs16 #counterstrike #dust2 #knife #كاونتر_سترايك")
+        self.assertEqual(clips.caption(clip(), "{hashtags}", "", "#cs16 #Knife"), "#cs16 #Knife")
+
+    def test_title_is_the_hook(self):
+        self.assertEqual(clips.title(clip()), clips.moment_text(clip())[0])
 
 
 class TestHours(unittest.TestCase):

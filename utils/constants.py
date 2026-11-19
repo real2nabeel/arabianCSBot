@@ -134,15 +134,16 @@ CLIPS_APPROVER_ROLE_IDS = _id_list_env("CLIPS_APPROVER_ROLE_IDS")
 CLIPS_PLATFORMS = [p.strip().lower() for p in os.getenv("CLIPS_PLATFORMS", "facebook,instagram").split(",") if p.strip()]
 CLIPS_POSTS_PER_DAY = _int_env("CLIPS_POSTS_PER_DAY", 2)
 CLIPS_POST_GAP_MINUTES = _int_env("CLIPS_POST_GAP_MINUTES", 240)
-CLIPS_POST_HOURS = os.getenv("CLIPS_POST_HOURS", "12-23").strip()
+CLIPS_POST_HOURS = os.getenv("CLIPS_POST_HOURS", "18-22").strip()   # the evening, when the audience is online
 CLIPS_CHECK_MINUTES = _int_env("CLIPS_CHECK_MINUTES", 10)
+# Post text: {hook} is the first line, made from the clip's best moment ("1v4 clutch on Dust2 - CS 1.6"); {question}
+# invites comments; {hashtags} gets one more for the kind of moment (#clutch, #ace, #knife, #awp, #multikill).
+# Emojis left out for now. "\n" in .env stands for a new line.
 CLIPS_CAPTION = os.getenv(
-    "CLIPS_CAPTION", "🔥 {player} – {summary} on {map}\n🎮 Play with us: connect {server}\n\n{hashtags}"
-).replace("\n", "\n")
-CLIPS_HASHTAGS = os.getenv(
-    "CLIPS_HASHTAGS",
-    "#CounterStrike #CS16 #CounterStrike16 #dust2 #FPS #Gaming #ArabGamers #ArabianServers #كاونتر_سترايك",
-).strip()
+    "CLIPS_CAPTION",
+    "{hook}\n{question}\n\n{player} on Arabian Servers · Dust2 since 2013\nJoin us: connect {server}\n\n{hashtags}",
+).replace("\\n", "\n")   # .env values are read as written, so a typed \n becomes a real line break here
+CLIPS_HASHTAGS = os.getenv("CLIPS_HASHTAGS", "#cs16 #counterstrike #dust2 #كاونتر_سترايك").strip()
 CLIPS_SERVER_ADDRESS = os.getenv("CLIPS_SERVER_ADDRESS", "").strip() or f"{SERVER_ADDRESS[0]}:{SERVER_ADDRESS[1]}"
 
 # Platform credentials. Meta: a never-expiring system-user token with the Page and Instagram account assigned.
