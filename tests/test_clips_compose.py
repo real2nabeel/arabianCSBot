@@ -150,5 +150,60 @@ class TestScopeAndBar(unittest.TestCase):
             self.assertEqual(fill.getpixel((compose.BAR_W + 10, 2))[3], 0)      # right half see-through
 
 
+def moment(**kw):
+    m = {"type": "multikill", "kills": 4, "headshots": 2, "weapons": "knife knife knife knife",
+         "extra": "knife knife knife knife", "score": 125, "enemies": 0, "start": 27.01, "end": 34.88, "round": 1}
+    m.update(kw)
+    return m
+
+
+class TestHeadline(unittest.TestCase):
+    def text(self, *moments):
+        parts, details = compose.headline(list(moments), "Melo")
+        return "".join(t for t, _ in parts), [t for t, a in parts if a], details
+
+    def test_multikill_with_one_weapon(self):
+        text, accent, details = self.text(moment())
+        self.assertEqual(text, "4 KNIFE KILLS")
+        self.assertEqual(accent, ["4"])
+        self.assertEqual(details, "Melo  ·  2 headshots  ·  7.9 s  ·  Round 1")
+
+    def test_mixed_weapons_and_ace(self):
+        self.assertEqual(self.text(moment(weapons="ak47 ak47 deagle"))[0], "4 KILLS")
+        self.assertEqual(self.text(moment(kills=5, weapons="awp " * 5))[0], "ACE · AWP")
+        self.assertEqual(self.text(moment(kills=5, weapons="ak47 m4a1 ak47 ak47 ak47"))[0], "ACE")
+
+    def test_clutch_and_specials(self):
+        text, accent, details = self.text(moment(type="clutch", enemies=3, kills=2, headshots=0, weapons="", extra="1v3"))
+        self.assertEqual((text, accent), ("1v3 CLUTCH", ["1v3"]))
+        self.assertEqual(details, "Melo  ·  2 kills  ·  Round 1")
+        self.assertEqual(self.text(moment(type="special", kills=1, weapons="awp", extra="noscope"))[0], "NO-SCOPE AWP")
+        self.assertEqual(self.text(moment(type="special", kills=2, weapons="awp awp", extra="double"))[0], "2 FOR 1 · AWP")
+
+    def test_highest_score_names_the_clip(self):
+        low = moment(type="special", kills=1, weapons="awp", extra="noscope", score=40)
+        self.assertEqual(self.text(low, moment())[0], "4 KNIFE KILLS")
+
+
+class TestBand(unittest.TestCase):
+    def test_images_fit_above_the_gameplay(self):
+        _, _, _, top = compose.framing(True)
+        parts, details = compose.headline([moment()], "Melo")
+        band = compose.band_image(parts, details, top, logo=None)
+        self.assertEqual(band.size, (1080, top))
+        self.assertEqual(compose.dots_image(2, 4, top).size, (1080, top))
+
+    def test_dots_fill_at_each_kill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            states = compose.dot_states([-1.0, 2.0, 3.5, 5.0, 20.0], 10.0, 488, tmp)
+            self.assertEqual([(a, b) for a, b, _ in states], [(0.0, 2.0), (2.0, 3.5), (3.5, 5.0), (5.0, 10.0)])
+            self.assertTrue(all(os.path.exists(p) for _, _, p in states))
+            self.assertEqual(compose.dot_states([4.0], 10.0, 488, tmp), [])   # one kill: no counter
+
+    def test_kill_times_match_the_feed(self):
+        kills = [{"t": 105.0}, {"t": 107.5}]
+        self.assertEqual(compose.kill_times(kills, 100.0, 0.5), [5.5, 8.0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 """Turning a raw 1920x1080 spectator recording into the finished clip files.
 
-Layout from ClipsPipeline/format_clips.bat: gameplay over a blurred copy, logo 230 px bottom-right. Those clips were
+Layout from ClipsPipeline/format_clips.bat: gameplay over a blurred copy, with a band above the gameplay holding the logo, a
+headline for the moment and kill dots (the logo used to sit bottom-right, under the apps' captions and buttons). Those clips were
 a player's own screen, gameplay 1680 wide and so 945 tall. HLTV playback adds spectator bars: the renderer hides the
 top one (render.hide_spectator_bar), the bottom one is cropped off, and the rest is zoomed to the same 945 height
 (1938 wide, a little more of the sides cut off). If the top bar couldn't be hidden, both bars are cropped and the
@@ -240,6 +241,169 @@ def feed_states(kills, start, length, offset, featured, tmp, sync=None):
         states.append((a, b, path))
     return states
 
+# ---- the band above the gameplay -----------------------------------------------------------------------------------
+# The only part of the frame that TikTok, Reels and Shorts all leave uncovered: below their top tabs (~250 px) and
+# above the gameplay. Their captions cover the bottom ~450 px and their buttons the right edge of the lower half, so
+# the logo lives here too. Drawn once as a picture; the kill dots are pictures switched on as each kill happens.
+BAND_FONT = next((p for p in ("/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Bold.ttf",
+                              "C:/Windows/Fonts/bahnschrift.ttf", FONT) if os.path.exists(p)), FONT)
+TEXT_FONT = next((p for p in (FONT, "C:/Windows/Fonts/arialbd.ttf") if os.path.exists(p)), FONT)
+SAND, BAND_WHITE, BAND_MUTED = (240, 184, 92), (255, 255, 255), (225, 222, 215)
+BAND_X = 64              # side margin
+BAND_TOP = 236           # first line; the apps' top tabs end above this
+WEAPON_NAMES = {"ak47": "AK-47", "m4a1": "M4A1", "awp": "AWP", "deagle": "DEAGLE", "knife": "KNIFE", "usp": "USP",
+                "glock18": "GLOCK", "scout": "SCOUT", "famas": "FAMAS", "galil": "GALIL", "mp5navy": "MP5", "p90": "P90",
+                "hegrenade": "GRENADE", "m3": "M3", "xm1014": "XM1014", "aug": "AUG", "sg552": "SG 552",
+                "g3sg1": "G3SG1", "sg550": "SG 550", "elite": "DUAL BERETTAS", "fiveseven": "FIVE-SEVEN",
+                "p228": "P228", "tmp": "TMP", "mac10": "MAC-10", "ump45": "UMP45", "m249": "M249"}
+TAGS = {"noscope": "no-scope", "double": "one shot, two kills", "air": "in the air"}
+
+
+def _font(path, size):
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:
+        return ImageFont.load_default(size)
+
+
+def headline(moments, player, round_no=None):
+    """(headline parts, details line) for a clip's moments: the parts are (text, accent) pairs, the accent drawn in
+    sand. The moment with the highest score names the clip."""
+    m = max(moments, key=lambda x: x.get("score", 0))
+    kills = int(m.get("kills") or 0)
+    weapons = (m.get("weapons") or "").split()
+    tags = set((m.get("extra") or "").split())
+    one = WEAPON_NAMES.get(weapons[0], weapons[0].upper()) if weapons and len(set(weapons)) == 1 else ""
+    kind = m.get("type")
+    if kind == "clutch":
+        parts = [(f"1v{int(m.get('enemies') or 0)}", True), (" CLUTCH", False)]
+    elif kind == "multikill" and kills >= 5:
+        parts = [("ACE", True)] + ([(f" · {one}", False)] if one else [])
+    elif kind == "multikill":
+        parts = [(str(kills), True), (f" {one} KILLS" if one else " KILLS", False)]
+    elif "noscope" in tags:
+        parts = [("NO-SCOPE", True)] + ([(f" {one}", False)] if one else [])
+    elif "double" in tags:
+        parts = [("2 FOR 1", True)] + ([(f" · {one}", False)] if one else [])
+    elif "air" in tags:
+        parts = [("MID-AIR", True), (" KILL", False)]
+    else:
+        parts = [(one or "KNIFE", True), (" KILL", False)]
+    details = [player]
+    hs = int(m.get("headshots") or 0)
+    if kind == "clutch" and kills:
+        details.append(f"{kills} kill{'s' if kills != 1 else ''}")
+    if hs:
+        details.append(f"{hs} headshot{'s' if hs != 1 else ''}")
+    span = float(m.get("end") or 0) - float(m.get("start") or 0)
+    if kind == "multikill" and span > 0:
+        details.append(f"{span:.1f} s")
+    if kind == "multikill":
+        details += [TAGS[t] for t in ("noscope", "double", "air") if t in tags]
+    rnd = m.get("round") if round_no is None else round_no
+    if rnd:
+        details.append(f"Round {rnd}")
+    return parts, "  ·  ".join(details)
+
+
+def _fit(draw, parts, path, size, width, smallest=40):
+    """The largest font from ``size`` down (in steps of 2) that fits ``parts`` into ``width``, but not below
+    ``smallest``."""
+    while size > smallest:
+        f = _font(path, size)
+        if sum(draw.textlength(t, font=f) for t, _ in parts) <= width:
+            return f
+        size -= 2
+    return _font(path, smallest)
+
+
+def _clip_text(draw, text, font, width):
+    """``text`` cut short with "…" so it fits ``width``."""
+    if draw.textlength(text, font=font) <= width:
+        return text
+    while text and draw.textlength(text + "…", font=font) > width:
+        text = text[:-1]
+    return text.rstrip(" ·") + "…"
+
+
+DOTS_W = 230             # room kept on the right of the headline for the kill dots
+DOTS_LABEL_W = 130       # and on the right of the details line for their "3 / 4"
+
+
+def band_image(parts, details, game_top, logo=LOGO):
+    """The band above the gameplay (1080 x ``game_top``): a soft dark shade, the logo and server line, the headline
+    and the details line."""
+    img = Image.new("RGBA", (1080, game_top), (0, 0, 0, 0))
+    shade = Image.new("L", img.size, 0)
+    ImageDraw.Draw(shade).rectangle((0, max(0, BAND_TOP - 30), 1080, game_top), fill=150)
+    shade = shade.filter(ImageFilter.GaussianBlur(30))
+    img.paste(Image.new("RGBA", img.size, (0, 0, 0, 255)), mask=shade)
+    d = ImageDraw.Draw(img)
+    if logo and os.path.exists(logo):
+        lg = Image.open(logo).convert("RGBA")
+        lg.thumbnail((78, 78), Image.LANCZOS)
+        img.alpha_composite(lg, (BAND_X, BAND_TOP))
+    d.text((BAND_X + 94, BAND_TOP + 12), "ARABIAN SERVERS", font=_font(TEXT_FONT, 28), fill=BAND_WHITE)
+    d.text((BAND_X + 94, BAND_TOP + 48), "DUST2 ONLY · SINCE 2013", font=_font(TEXT_FONT, 20), fill=BAND_MUTED)
+    big = _fit(d, parts, BAND_FONT, 104, 1080 - 2 * BAND_X - DOTS_W)
+    y = game_top - 160
+    x = BAND_X
+    for text, accent in parts:
+        d.text((x + 3, y + 4), text, font=big, fill=(0, 0, 0, 150))
+        d.text((x, y), text, font=big, fill=SAND if accent else BAND_WHITE)
+        x += d.textlength(text, font=big)
+    room = 1080 - 2 * BAND_X - DOTS_LABEL_W     # the dots' "3 / 4" sits at the right end of this line
+    small = _fit(d, [(details, False)], TEXT_FONT, 32, room, smallest=24)
+    d.text((BAND_X, game_top - 50), _clip_text(d, details, small, room), font=small, fill=BAND_MUTED)
+    return img
+
+
+def dots_image(filled, total, game_top):
+    """The kill dots, right of the headline: ``filled`` of ``total`` filled, with "filled / total" under them."""
+    img = Image.new("RGBA", (1080, game_top), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    r, gap = 17, 14
+    if total > 6:      # many kills: smaller dots so they keep to their corner
+        r, gap = 12, 8
+    x0 = 1080 - BAND_X - total * 2 * r - (total - 1) * gap
+    y = game_top - 160 + 40
+    for i in range(total):
+        box = (x0 + i * (2 * r + gap), y, x0 + i * (2 * r + gap) + 2 * r, y + 2 * r)
+        if i < filled:
+            d.ellipse(box, fill=SAND)
+        else:
+            d.ellipse(box, outline=(255, 255, 255, 200), width=4)
+    f = _font(TEXT_FONT, 28)
+    label = f"{filled} / {total}"
+    d.text((1080 - BAND_X - d.textlength(label, font=f), game_top - 48), label, font=f, fill=BAND_MUTED)
+    return img
+
+
+def kill_times(kills, start, offset, sync=None):
+    """Clip seconds at which each kill shows, timed exactly like the kill feed."""
+    if sync and len(sync) >= 2:
+        s = steady(sync)
+        return [video_time(s, k["t"]) + FEED_LEAD for k in kills]
+    return [k["t"] - start + offset for k in kills]
+
+
+def dot_states(times, length, game_top, tmp):
+    """(from, to, png) for each count of filled dots: none until the first kill, then one more at each kill."""
+    times = sorted(t for t in times if 0 <= t < length)
+    total = len(times)
+    if total < 2:       # a single kill needs no counter
+        return []
+    edges = [0.0] + times + [length]
+    states = []
+    for n, (a, b) in enumerate(zip(edges, edges[1:])):
+        if b <= a:
+            continue
+        path = os.path.join(tmp, f"dots{n:02d}.png")
+        dots_image(n, total, game_top).save(path)
+        states.append((a, b, path))
+    return states
+
+
 def next_kbps(kbps, size):
     """The video bitrate for another try after a Discord copy of ``size`` bytes came out over DISCORD_BYTES:
     lowered in proportion, plus 3% to spare (x264 overshoots hard clips by about 2%)."""
@@ -267,12 +431,13 @@ def discord_copy(hq, dc, length, log):
 
 
 def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync=None, bar_hidden=True,
-            zooms=(), bars=()):
+            zooms=(), bars=(), band=None):
     """Make out_dir/hq.mp4 and out_dir/discord.mp4 from ``raw``, recorded from demo time ``start``.
     ``kills``: the demo's kill lines (clips.demo.scan); ``sync``: render.record's markers, for the kill feed's timing;
     ``bar_hidden``: whether the spectator top bar was hidden while recording (picks the framing); ``zooms``: the
     player's (demo time, fov) zoom changes (clips.demo.overlays), for the sniper scope's crosshair; ``bars``: the
-    player's plant/defuse progress bars (clips.demo.overlays).
+    player's plant/defuse progress bars (clips.demo.overlays); ``band``: {"moments", "player", "round"} for the
+    headline band above the gameplay, with the logo in it (without it, the logo goes bottom right as before).
     Returns (hq path, discord path)."""
     os.makedirs(out_dir, exist_ok=True)
     length = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -310,8 +475,23 @@ def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync
              f"[g2]scale={game_w}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[b0];")
         for i, (s, e, _) in enumerate(states):
             f += f"[b{i}][{i + 2}:v]overlay=0:{game_top + 12}:enable='between(t,{s:.3f},{e:.3f})'[b{i + 1}];"
-        f += (f"[1:v]scale=230:-1[logo];[b{len(states)}][logo]overlay=W-w-30:H-h-45[v];"
-              f"[0:a]alimiter=limit=0.89:level=false[a]")
+        last = f"b{len(states)}"
+        if band:
+            parts, details = headline(band["moments"], band["player"], band.get("round"))
+            band_png = os.path.join(tmp, "band.png")
+            band_image(parts, details, game_top).save(band_png)
+            inputs += ["-i", band_png]
+            f += f"[{last}][{n}:v]overlay=0:0[top];"
+            last, n = "top", n + 1
+            mine = [k for k in kills if featured and k["k"] == featured]
+            for i, (a, b, p) in enumerate(dot_states(kill_times(mine, start, offset, sync), length, game_top, tmp)):
+                inputs += ["-i", p]
+                f += f"[{last}][{n}:v]overlay=0:0:enable='between(t,{a:.3f},{b:.3f})'[dots{i}];"
+                last, n = f"dots{i}", n + 1
+            f += f"[{last}]null[v];"
+        else:
+            f += f"[1:v]scale=230:-1[logo];[{last}][logo]overlay=W-w-30:H-h-45[v];"
+        f += "[0:a]alimiter=limit=0.89:level=false[a]"
         hq = os.path.join(out_dir, "hq.mp4")
         subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", *inputs, "-filter_complex", f,
                         "-map", "[v]", "-map", "[a]", "-t", f"{length:.3f}", "-c:v", "libx264", "-preset", "slow", "-crf", "18",
