@@ -96,6 +96,31 @@ class TestWriteConfig(unittest.TestCase):
         self.assertIn("brightness 1.5", lines)
         self.assertIn("gamma 2.6", lines)
         self.assertLess(lines.index("gamma 2.6"), lines.index("playdemo " + render.DEMO_NAME))
+        self.assertIn(render.CROSSHAIR_ON, lines)   # a render never starts with the last one's crosshair hidden
+        self.assertIn("cl_crosshair_translucent 1", lines)
+
+
+def kill(t, w, k=5):
+    return {"t": t, "k": k, "w": w}
+
+
+class TestSniperCrosshair(unittest.TestCase):
+    def test_from_weapon_lines(self):
+        weapons = [(10.0, "awp"), (14.0, "deagle"), (20.0, "scout"), (21.0, "scout")]
+        self.assertEqual(render.sniper_spans(weapons, [], [], 5), [(10.0, 14.0), (20.0, None)])
+        self.assertEqual(render.sniper_spans([(3.0, "ak47")], [], [kill(4, "awp")], 5), [])   # lines win
+        self.assertEqual(render.crosshair_commands([(10.0, 14.0), (20.0, None)]),
+                         [(10.0, 'cl_crosshair_color "0 0 0"'), (14.0, 'cl_crosshair_color "50 250 50"'),
+                          (20.0, 'cl_crosshair_color "0 0 0"')])
+
+    def test_guessed_for_older_demos(self):
+        kills = [kill(10.0, "awp"), kill(12.0, "awp"), kill(13.0, "ak47"), kill(30.0, "scout", k=7),
+                 kill(16.5, "awp"), kill(400.0, "awp")]
+        zooms = [(11.0, 40), (11.5, 90), (25.0, 10)]
+        # 16.5 joins the first span (a short gap, no blink); 25.0 is its own; 400 is outside the window
+        self.assertEqual(render.sniper_spans([], zooms, kills, 5, 0, 60),
+                         [(10.0 - render.GUESS_BEFORE, 16.5 + render.GUESS_AFTER),
+                          (25.0 - render.GUESS_BEFORE, 25.0 + render.GUESS_AFTER)])
 
 
 if __name__ == "__main__":

@@ -127,6 +127,38 @@ class TestOverlays(unittest.TestCase):
             got = demo.overlays(src, entity=3, t0=0, t1=5)
         self.assertEqual(got["zooms"], [(0.3, 40), (1.5, 90)])
         self.assertEqual(got["bars"], [(0.8, 5, 0), (1.2, 10, 40)])
+        self.assertEqual(got["weapons"], [])
+
+    def test_weapons_start_with_the_one_held(self):
+        import os
+        import tempfile
+        times = [i * 0.1 for i in range(20)]
+        lines = {1: b"\x08[clips] weapon t=1.00 p=3 w=ak47\x00",
+                 2: b"\x08[clips] weapon t=1.10 p=3 w=awp\x00",       # before the window: held when it starts
+                 6: b"\x08[clips] weapon t=1.50 p=4 w=knife\x00",     # another player
+                 9: b"\x08[clips] weapon t=1.80 p=3 w=deagle\x00"}
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "a.dem")
+            open(src, "wb").write(_demo_bytes(times, b"", extra=lines))
+            got = demo.overlays(src, entity=3, t0=0.5, t1=5)
+        self.assertEqual(got["weapons"], [(0.5, "awp"), (0.9, "deagle")])
+
+
+class TestCommands(unittest.TestCase):
+    def test_several_commands_go_in_at_their_times(self):
+        import os
+        import tempfile
+        times = [i * 0.5 for i in range(8)]
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = os.path.join(tmp, "a.dem"), os.path.join(tmp, "b.dem")
+            open(src, "wb").write(_demo_bytes(times, b""))
+            demo.follow(src, dst, entity=3, t0=10, t1=11,
+                        commands=[(2.0, "crosshair 1"), (0.9, "crosshair 0"), (0.1, "echo a")])
+            out = open(dst, "rb").read()
+        frames = [(round(t, 2), out[m:m + 200]) for _, _, t, m in demo._frames(out, demo.HEADER_LEN, len(out)) if m]
+        at = {cmd: next(t for t, body in frames if b"\x09" + cmd + b"\n\x00" in body)
+              for cmd in (b"echo a", b"crosshair 0", b"crosshair 1")}
+        self.assertEqual(at, {b"echo a": 0.5, b"crosshair 0": 1.0, b"crosshair 1": 2.0})
 
 
 if __name__ == "__main__":

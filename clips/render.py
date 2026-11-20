@@ -55,6 +55,49 @@ SLOW_LEAD = 15.0       # switch to normal speed this many demo seconds before th
 MAX_LATE = 3.0
 SLOW_COMMANDS = f"host_framerate 0;stopsound;volume {VOLUME};hud_deathnotice_time 0;cl_showfps 0;echo ==SLOW=="
 DEMO_NAME = "clipsrender"
+# The game draws no crosshair while a sniper rifle is out (zoomed or not), but in demo playback it doesn't know what
+# the followed player holds, so it always drew one and no-scopes looked easy. The demo copy switches it off and on.
+# `crosshair 0` doesn't reach the crosshair drawn while spectating (tested), but it is drawn additively
+# (cl_crosshair_translucent 1), so a black one is invisible.
+SNIPERS = ("awp", "scout", "g3sg1", "sg550")
+CROSSHAIR_COLOR = os.environ.get("CLIPS_CROSSHAIR_COLOR", "50 250 50")   # Nabeel's own colour
+CROSSHAIR_OFF = 'cl_crosshair_color "0 0 0"'
+CROSSHAIR_ON = f'cl_crosshair_color "{CROSSHAIR_COLOR}"'
+GUESS_BEFORE = 2.5     # demos from before the plugin named weapons: hide it this long before a sniper kill or zoom...
+GUESS_AFTER = 1.0      # ...and this long after
+GUESS_JOIN = 2.0       # guessed spans this close together are one (no crosshair blinking on between AWP shots)
+
+
+def sniper_spans(weapons, zooms, kills, entity, t0=float("-inf"), t1=float("inf")):
+    """(from, to) demo times when ``entity`` has a sniper rifle out, from demo.overlays' weapons; ``to`` is None for
+    "to the end". Older demos have no weapon lines: then it is guessed around the player's sniper kills and zooms
+    between t0 and t1."""
+    spans = []
+    if weapons:
+        for t, w in sorted(weapons):
+            if w in SNIPERS and (not spans or spans[-1][1] is not None):
+                spans.append((t, None))
+            elif w not in SNIPERS and spans and spans[-1][1] is None:
+                spans[-1] = (spans[-1][0], t)
+        return spans
+    marks = sorted(t for t in [k["t"] for k in kills if k["k"] == entity and k["w"] in SNIPERS]
+                   + [t for t, fov in zooms if 0 < fov < 90] if t0 <= t <= t1)
+    for t in marks:
+        if spans and t - GUESS_BEFORE <= spans[-1][1] + GUESS_JOIN:
+            spans[-1] = (spans[-1][0], t + GUESS_AFTER)
+        else:
+            spans.append((t - GUESS_BEFORE, t + GUESS_AFTER))
+    return spans
+
+
+def crosshair_commands(spans):
+    """demo.follow commands that hide the crosshair during ``spans``."""
+    out = []
+    for a, b in spans:
+        out.append((a, CROSSHAIR_OFF))
+        if b is not None:
+            out.append((b, CROSSHAIR_ON))
+    return out
 # Debian puts Steam in /usr/games, which cron's minimal PATH leaves out.
 STEAM = os.environ.get("CLIPS_STEAM") or shutil.which("steam") or "/usr/games/steam"
 
@@ -129,6 +172,7 @@ def _write(name, lines):
 def write_config():
     """clipfind.cfg: play DEMO_NAME fast-forwarding; the demo itself switches to normal speed (SLOW_COMMANDS)."""
     _write("clipfind.cfg", [f"volume {VOLUME}", "cl_showfps 0", "fps_max 100", "fastsprites 1",
+                            "cl_crosshair_translucent 1", CROSSHAIR_ON,
                             f"brightness {BRIGHTNESS}", f"gamma {GAMMA}",
                             f"host_framerate {STEP}", f"playdemo {DEMO_NAME}"])
 
