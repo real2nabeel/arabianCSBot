@@ -80,6 +80,7 @@ class TestSyncMarkers(unittest.TestCase):
             # none in the frame that registers TextMsg, then every half second until the moment
             self.assertEqual(marks, [0.25, 0.75, 1.25, 1.75])
             self.assertEqual(demo.SYNC_RE.findall("x[clipsync] 1.50y"), ["1.50"])
+            self.assertEqual(demo.SYNC_RE.findall("[clipsync] 230.25.\n[clipsync] 7"), ["230.25", "7"])
             # with sync_end: every SYNC_FINE (0.1 s, here every frame of 0.25 s) from the moment on, until sync_end
             demo.follow(src, dst, entity=3, t0=10, t1=11, sync_until=2.0, sync_end=2.8)
             out = open(dst, "rb").read()

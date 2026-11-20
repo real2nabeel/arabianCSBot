@@ -50,6 +50,9 @@ BRIGHTNESS = os.environ.get("CLIPS_BRIGHTNESS", "1.77")
 GAMMA = os.environ.get("CLIPS_GAMMA", "2.76")
 STEP = 0.25            # host_framerate while fast-forwarding (asked-for demo seconds per frame)
 SLOW_LEAD = 15.0       # switch to normal speed this many demo seconds before the moment
+# CS writes its console to disk in bursts, so the first marker seen near the moment can already be a little past
+# it. Up to this many seconds late, recording starts at once (the clip loses that much of its lead-in).
+MAX_LATE = 3.0
 SLOW_COMMANDS = f"host_framerate 0;stopsound;volume {VOLUME};hud_deathnotice_time 0;cl_showfps 0;echo ==SLOW=="
 DEMO_NAME = "clipsrender"
 # Debian puts Steam in /usr/games, which cron's minimal PATH leaves out.
@@ -174,6 +177,14 @@ class _Console:
 MISSING_RE = re.compile(r"Cannot continue without \w+ ([^\s,]+)")
 
 
+def start_wait(at, start):
+    """Seconds to wait before recording, with playback at demo time ``at`` and the moment at ``start``: the time
+    still to go, or 0 when playback is already up to MAX_LATE seconds past it. Later than that is an error."""
+    if at - start > MAX_LATE:
+        raise RenderError(f"playback overshot the moment (at {at:.1f} s, moment at {start:.1f} s)")
+    return max(0.0, start - at)
+
+
 def missing_file(error):
     """The game file a failed render needs (e.g. "sprites/x.spr" from "Cannot continue without model
     sprites/x.spr, disconnecting."), or None."""
@@ -264,10 +275,11 @@ def record(demo_path, start, length, out_mkv, start_timeout=400):
                 _run("pkill", "-x", "hl_linux")
                 raise RenderError(f"the demo's switch to normal speed didn't run (playback at {at:.1f} s)")
             if slow and at >= start - 2 * demo.SYNC_EVERY:
-                if at > start:
+                try:
+                    time.sleep(start_wait(at, start))   # normal speed now: demo seconds are real seconds
+                except RenderError:
                     _run("pkill", "-x", "hl_linux")
-                    raise RenderError(f"playback overshot the moment (at {at:.1f} s, moment at {start:.1f} s)")
-                time.sleep(max(0.0, start - at))   # normal speed now: demo seconds are real seconds
+                    raise
                 break
         waited = time.time() - began
         if _steam_busy_since(log_offset):
