@@ -135,5 +135,29 @@ class TestRunReport(unittest.TestCase):
         self.assertIsNone(clips.run_report({"state": "running"}))
 
 
+class TestQueuePage(unittest.TestCase):
+    def queue(self, n):
+        return {"clips": [dict(clip(f"k{i}"), player="Player%d" % i, score=200 - i) for i in range(n)]}
+
+    def test_first_page_lists_titles_best_first(self):
+        text, pages = clips.queue_page(self.queue(45))
+        lines = text.split("\n")
+        self.assertEqual(pages, 3)
+        self.assertEqual(len(lines), 21)                       # header + 20 rows
+        self.assertTrue(lines[1].lstrip().startswith("1    200"))
+        self.assertIn(clips.moment_text(clip("k0"))[0], lines[1])
+        self.assertTrue(lines[1].endswith("Player0"))
+
+    def test_last_page_and_out_of_range(self):
+        text, pages = clips.queue_page(self.queue(45), page=9)  # past the end: the last page
+        self.assertEqual(len(text.split("\n")), 6)
+        self.assertTrue(text.split("\n")[1].lstrip().startswith("41"))
+
+    def test_long_names_are_cut_and_empty_queue(self):
+        q = {"clips": [dict(clip(), player="X" * 40, score=90)]}
+        self.assertTrue(clips.queue_page(q)[0].endswith("X" * 15 + "…"))
+        self.assertEqual(clips.queue_page({"clips": []}), ("No clips are waiting to be made.", 1))
+
+
 if __name__ == "__main__":
     unittest.main()
