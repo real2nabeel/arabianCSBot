@@ -253,12 +253,6 @@ TEXT_FONT = next((p for p in (FONT, "C:/Windows/Fonts/arialbd.ttf") if os.path.e
 SAND, BAND_WHITE, BAND_MUTED = (240, 184, 92), (255, 255, 255), (225, 222, 215)
 BAND_X = 64              # side margin
 BAND_TOP = 236           # first line; the apps' top tabs end above this
-WEAPON_NAMES = {"ak47": "AK-47", "m4a1": "M4A1", "awp": "AWP", "deagle": "DEAGLE", "knife": "KNIFE", "usp": "USP",
-                "glock18": "GLOCK", "scout": "SCOUT", "famas": "FAMAS", "galil": "GALIL", "mp5navy": "MP5", "p90": "P90",
-                "hegrenade": "GRENADE", "m3": "M3", "xm1014": "XM1014", "aug": "AUG", "sg552": "SG 552",
-                "g3sg1": "G3SG1", "sg550": "SG 550", "elite": "DUAL BERETTAS", "fiveseven": "FIVE-SEVEN",
-                "p228": "P228", "tmp": "TMP", "mac10": "MAC-10", "ump45": "UMP45", "m249": "M249"}
-TAGS = {"noscope": "no-scope", "double": "one shot, two kills", "air": "in the air"}
 
 
 def _font(path, size):
@@ -268,44 +262,30 @@ def _font(path, size):
         return ImageFont.load_default(size)
 
 
-def headline(moments, player, round_no=None):
+def headline(moments, player):
     """(headline parts, details line) for a clip's moments: the parts are (text, accent) pairs, the accent drawn in
-    sand. The moment with the highest score names the clip."""
+    sand, and the details line is the player. The moment with the highest score names the clip. Kept short: the
+    kill dots count the kills and the post text carries the rest. The weapon shows only when it is the knife."""
     m = max(moments, key=lambda x: x.get("score", 0))
     kills = int(m.get("kills") or 0)
-    weapons = (m.get("weapons") or "").split()
     tags = set((m.get("extra") or "").split())
-    one = WEAPON_NAMES.get(weapons[0], weapons[0].upper()) if weapons and len(set(weapons)) == 1 else ""
+    knife = set((m.get("weapons") or "").split()) == {"knife"}
     kind = m.get("type")
-    hs = int(m.get("headshots") or 0)
     if kind == "clutch":
         parts = [(f"1v{int(m.get('enemies') or 0)}", True), (" CLUTCH", False)]
     elif kind == "multikill" and streak_name(kills):
-        parts = [(streak_name(kills).upper(), True)] + ([(f" · {one}", False)] if one else [])
+        parts = [(streak_name(kills).upper(), True)] + ([(" · KNIFE", False)] if knife else [])
     elif kind == "multikill":
-        parts = [(str(kills), True), (f" {one} KILLS" if one else " KILLS", False)]
+        parts = [(str(kills), True), (" KNIFE KILLS" if knife else " KILLS", False)]
     elif "noscope" in tags:
-        parts = [("NO-SCOPE", True)] + ([(f" {one}", False)] if one else [])
+        parts = [("NO-SCOPE", True)]
     elif "double" in tags:
-        parts = [("2 FOR 1", True)] + ([(f" · {one}", False)] if one else [])
+        parts = [("2 FOR 1", True)]
     elif "air" in tags:
         parts = [("MID-AIR", True), (" KILL", False)]
     else:
-        parts = [(one or "KNIFE", True), (" KILL", False)]
-    details = [player]
-    if kind in ("clutch", "multikill") and kills:
-        details.append(f"{kills} kill{'s' if kills != 1 else ''}")
-    if hs:
-        details.append(f"{hs} headshot{'s' if hs != 1 else ''}")
-    span = float(m.get("end") or 0) - float(m.get("start") or 0)
-    if kind == "multikill" and span > 0:
-        details.append(f"{span:.1f} s")
-    if kind == "multikill":
-        details += [TAGS[t] for t in ("noscope", "double", "air") if t in tags]
-    rnd = m.get("round") if round_no is None else round_no
-    if rnd:
-        details.append(f"Round {rnd}")
-    return parts, "  ·  ".join(details)
+        parts = [("KNIFE", True), (" KILL", False)] if knife else [("KILL", True)]
+    return parts, player
 
 
 def _fit(draw, parts, path, size, width, smallest=40):
@@ -342,9 +322,15 @@ def _shadowed(d, xy, text, font, fill):
     d.text(xy, text, font=font, fill=fill)
 
 
-def band_image(parts, details, game_top, logo=LOGO):
-    """The band above the gameplay (1080 x ``game_top``): a soft dark shade, the logo and server line, the headline
-    and the details line."""
+def map_line(map_name):
+    """The line under the server name: the clip's map ("de_dust2" -> "DUST2") and the server's age."""
+    name = (map_name or "").split("_", 1)[-1].upper()
+    return f"{name} · SINCE 2013" if name else "SINCE 2013"
+
+
+def band_image(parts, details, game_top, logo=LOGO, map_name="de_dust2"):
+    """The band above the gameplay (1080 x ``game_top``): a soft dark shade, the logo and server line (with the
+    clip's map), the headline and the details line."""
     img = Image.new("RGBA", (1080, game_top), (0, 0, 0, 0))
     shade = Image.new("L", img.size, 0)
     ImageDraw.Draw(shade).rectangle((0, max(0, BAND_TOP - 30), 1080, game_top), fill=150)
@@ -360,7 +346,7 @@ def band_image(parts, details, game_top, logo=LOGO):
         text_x = BAND_X + LOGO_SIZE + 22
     name = _fit(d, [("ARABIAN SERVERS", False)], BAND_FONT, 92, 1080 - BAND_X - text_x)
     _shadowed(d, (text_x, BAND_TOP - 8), "ARABIAN SERVERS", name, BAND_WHITE)
-    d.text((text_x + 2, BAND_TOP + 86), "DUST2 ONLY · SINCE 2013", font=_font(TEXT_FONT, 26), fill=SAND)
+    d.text((text_x + 2, BAND_TOP + 86), map_line(map_name), font=_font(TEXT_FONT, 26), fill=SAND)
     play = _fit(d, parts, BAND_FONT, 60, 1080 - 2 * BAND_X - DOTS_W)
     x = BAND_X
     for text, accent in parts:
@@ -450,7 +436,7 @@ def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync
     ``kills``: the demo's kill lines (clips.demo.scan); ``sync``: render.record's markers, for the kill feed's timing;
     ``bar_hidden``: whether the spectator top bar was hidden while recording (picks the framing); ``zooms``: the
     player's (demo time, fov) zoom changes (clips.demo.overlays), for the sniper scope's crosshair; ``bars``: the
-    player's plant/defuse progress bars (clips.demo.overlays); ``band``: {"moments", "player", "round"} for the
+    player's plant/defuse progress bars (clips.demo.overlays); ``band``: {"moments", "player", "map"} for the
     headline band above the gameplay, with the logo in it (without it, the logo goes bottom right as before).
     Returns (hq path, discord path)."""
     os.makedirs(out_dir, exist_ok=True)
@@ -491,9 +477,9 @@ def compose(raw, kills, start, out_dir, featured=0, offset=KILL_FEED_DELAY, sync
             f += f"[b{i}][{i + 2}:v]overlay=0:{game_top + 12}:enable='between(t,{s:.3f},{e:.3f})'[b{i + 1}];"
         last = f"b{len(states)}"
         if band:
-            parts, details = headline(band["moments"], band["player"], band.get("round"))
+            parts, details = headline(band["moments"], band["player"])
             band_png = os.path.join(tmp, "band.png")
-            band_image(parts, details, game_top).save(band_png)
+            band_image(parts, details, game_top, map_name=band.get("map") or "de_dust2").save(band_png)
             inputs += ["-i", band_png]
             f += f"[{last}][{n}:v]overlay=0:0[top];"
             last, n = "top", n + 1

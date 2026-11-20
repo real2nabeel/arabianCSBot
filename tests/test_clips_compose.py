@@ -162,28 +162,35 @@ class TestHeadline(unittest.TestCase):
         parts, details = compose.headline(list(moments), "Melo")
         return "".join(t for t, _ in parts), [t for t, a in parts if a], details
 
-    def test_multikill_with_one_weapon(self):
-        text, accent, details = self.text(moment())
-        self.assertEqual(text, "QUAD KILL · KNIFE")
-        self.assertEqual(accent, ["QUAD KILL"])
-        self.assertEqual(details, "Melo  ·  4 kills  ·  2 headshots  ·  7.9 s  ·  Round 1")
+    def test_only_the_play_and_the_player(self):
+        text, accent, details = self.text(moment(weapons="ak47 ak47 ak47 ak47"))
+        self.assertEqual((text, accent, details), ("QUAD KILL", ["QUAD KILL"], "Melo"))
+
+    def test_the_knife_is_named(self):
+        self.assertEqual(self.text(moment())[0], "QUAD KILL · KNIFE")
+        self.assertEqual(self.text(moment(kills=2, weapons="knife knife"))[0], "DOUBLE KILL · KNIFE")
+        self.assertEqual(self.text(moment(type="special", kills=1, weapons="knife", extra=""))[0], "KNIFE KILL")
 
     def test_streak_names(self):
         self.assertEqual(self.text(moment(weapons="ak47 ak47 deagle"))[0], "QUAD KILL")
-        self.assertEqual(self.text(moment(kills=5, weapons="awp " * 5))[0], "MULTI KILL · AWP")
+        self.assertEqual(self.text(moment(kills=5, weapons="awp " * 5))[0], "MULTI KILL")
         self.assertEqual(self.text(moment(kills=6, weapons="ak47 m4a1 ak47 ak47 ak47"))[0], "RAMPAGE")
         self.assertEqual(self.text(moment(kills=12, weapons="ak47 m4a1"))[0], "UNSTOPPABLE")
 
     def test_clutch_and_specials(self):
         text, accent, details = self.text(moment(type="clutch", enemies=3, kills=2, headshots=0, weapons="", extra="1v3"))
-        self.assertEqual((text, accent), ("1v3 CLUTCH", ["1v3"]))
-        self.assertEqual(details, "Melo  ·  2 kills  ·  Round 1")
-        self.assertEqual(self.text(moment(type="special", kills=1, weapons="awp", extra="noscope"))[0], "NO-SCOPE AWP")
-        self.assertEqual(self.text(moment(type="special", kills=2, weapons="awp awp", extra="double"))[0], "2 FOR 1 · AWP")
+        self.assertEqual((text, accent, details), ("1v3 CLUTCH", ["1v3"], "Melo"))
+        self.assertEqual(self.text(moment(type="special", kills=1, weapons="awp", extra="noscope"))[0], "NO-SCOPE")
+        self.assertEqual(self.text(moment(type="special", kills=2, weapons="awp awp", extra="double"))[0], "2 FOR 1")
 
     def test_highest_score_names_the_clip(self):
         low = moment(type="special", kills=1, weapons="awp", extra="noscope", score=40)
         self.assertEqual(self.text(low, moment())[0], "QUAD KILL · KNIFE")
+
+    def test_map_line(self):
+        self.assertEqual(compose.map_line("de_dust2"), "DUST2 · SINCE 2013")
+        self.assertEqual(compose.map_line("de_inferno"), "INFERNO · SINCE 2013")
+        self.assertEqual(compose.map_line(""), "SINCE 2013")
 
 
 class TestBand(unittest.TestCase):
