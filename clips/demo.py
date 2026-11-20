@@ -267,7 +267,7 @@ def follow(src, dst, entity, t0, t1, sync_until=None, commands=None, sync_end=No
     with a time marker every SYNC_EVERY seconds before ``sync_until`` (then every SYNC_FINE seconds up to
     ``sync_end``, if given), and ``commands`` = (t, "cmd;cmd"), or a list of them, run by the game when playback
     reaches demo time t (see the module notes). Returns the number of frames changed."""
-    if commands and isinstance(commands[1], str):
+    if commands and isinstance(commands[0], (int, float)):
         commands = [commands]
     commands = sorted(commands or [])
     d = open(src, "rb").read()
