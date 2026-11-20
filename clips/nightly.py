@@ -243,7 +243,7 @@ def make_clip(clip, info, done):
     first = clip["moments"][0]
     compose.compose(raw, info["kills"], clip["start"], out_dir + ".part", featured=clip["entity"], sync=sync,
                     bar_hidden=bar_hidden, zooms=drawn["zooms"], bars=drawn["bars"],
-                    band={"moments": clip["moments"], "player": clip["player"], "round": first.get("round")})
+                    band={"moments": clip["moments"], "player": clip["player"], "map": clip.get("map")})
     meta = {k: clip[k] for k in ("key", "map", "player", "team", "score", "summary")}
     meta.update({"date": first.get("date", ""), "round": first.get("round"), "length": round(length, 1),
                  "types": sorted({m["type"] for m in clip["moments"]}),
