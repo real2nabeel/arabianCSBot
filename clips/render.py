@@ -55,6 +55,84 @@ SLOW_LEAD = 15.0       # switch to normal speed this many demo seconds before th
 MAX_LATE = 3.0
 SLOW_COMMANDS = f"host_framerate 0;stopsound;volume {VOLUME};hud_deathnotice_time 0;cl_showfps 0;echo ==SLOW=="
 DEMO_NAME = "clipsrender"
+# The game draws no crosshair while a sniper rifle is out (zoomed or not), but in demo playback it doesn't know what
+# the followed player holds, so it always drew one and no-scopes looked easy. The demo copy switches it off and on.
+# `crosshair 0` doesn't reach the crosshair drawn while spectating (tested), but it is drawn additively
+# (cl_crosshair_translucent 1), so a black one is invisible.
+SNIPERS = ("awp", "scout", "g3sg1", "sg550")
+CROSSHAIR_COLOR = os.environ.get("CLIPS_CROSSHAIR_COLOR", "50 250 50")   # Nabeel's own colour
+CROSSHAIR_OFF = 'cl_crosshair_color "0 0 0"'
+CROSSHAIR_ON = f'cl_crosshair_color "{CROSSHAIR_COLOR}"'
+# Demos from before the plugin named weapons are read from the player's weapon animations instead. Shots animate on
+# the player's own screen, so the lines are draws, reloads and idles; an AWP only sends idle (0), reload (4) and draw
+# (5). Any other animation means another weapon is out. A 5 is the AWP's draw, or the Deagle's or M4A1's: it is the
+# AWP when the next thing seen is an AWP kill or a zoom; two within QUICK seconds are a quick switch, away and back.
+SNIPER_NEUTRAL = (0, 4)
+SNIPER_DRAW = 5
+QUICK = 1.0
+GUESS_BEFORE = 2.5     # a sniper kill or zoom with no draw seen before it: it came out this long before at most
+
+
+def _from_animations(zooms, kills, entity, t0, t1, anims):
+    """(time, sniper out?) changes for a demo without weapon lines."""
+    within = lambda t: t0 <= t <= t1   # noqa: E731
+    ev = sorted([(k["t"], "sniper" if k["w"] in SNIPERS else "other") for k in kills
+                 if k["k"] == entity and within(k["t"])]
+                + [(t, "sniper") for t, fov in zooms if 0 < fov < 90 and within(t)]
+                + [(t, "draw" if a == SNIPER_DRAW else "other") for t, a in anims
+                   if a not in SNIPER_NEUTRAL and within(t)])
+    state = next((kind for _, kind in ev if kind != "draw"), "other") == "sniper"   # what the window opens with
+    changes, before = [(t0, state)], {}
+    for i, (t, kind) in enumerate(ev):
+        prev = ev[i - 1] if i else None
+        nxt = ev[i + 1] if i + 1 < len(ev) else None
+        if kind == "sniper":
+            new = True
+            if not state:   # it came out without a draw we could read: shortly before
+                t = max(prev[0] if prev else t0, t - GUESS_BEFORE)
+        elif kind == "other":
+            new = False
+        elif nxt and nxt[1] == "sniper":
+            new = True
+        elif nxt and nxt[1] == "draw" and nxt[0] - t <= QUICK:
+            new = not state                     # away...
+        elif prev and prev[1] == "draw" and t - prev[0] <= QUICK:
+            new = before[i - 1]                 # ...and straight back
+        else:
+            new = False
+        before[i] = state
+        if new != state:
+            changes.append((t, new))
+            state = new
+    return changes
+
+
+def sniper_spans(weapons, zooms, kills, entity, t0=float("-inf"), t1=float("inf"), anims=()):
+    """(from, to) demo times when ``entity`` has a sniper rifle out between t0 and t1; ``to`` is None for "to the
+    end". From demo.overlays' weapons, or for older demos its anims (see above) with the player's kills and zooms."""
+    if weapons:
+        changes = [(t, w in SNIPERS) for t, w in sorted(weapons)]
+    else:
+        changes = _from_animations(zooms, kills, entity, t0, t1, anims)
+    spans = []
+    for t, out in changes:
+        if out and (not spans or spans[-1][1] is not None):
+            spans.append((t, None))
+        elif not out and spans and spans[-1][1] is None:
+            spans[-1] = (spans[-1][0], t)
+    return [s for s in spans if s[1] is None or s[1] > s[0]]
+
+
+def crosshair_commands(spans):
+    """demo.follow commands that hide the crosshair during ``spans``."""
+    out = []
+    for a, b in spans:
+        out.append((a, CROSSHAIR_OFF))
+        if b is not None:
+            out.append((b, CROSSHAIR_ON))
+    return out
+
+
 # Debian puts Steam in /usr/games, which cron's minimal PATH leaves out.
 STEAM = os.environ.get("CLIPS_STEAM") or shutil.which("steam") or "/usr/games/steam"
 
@@ -129,6 +207,7 @@ def _write(name, lines):
 def write_config():
     """clipfind.cfg: play DEMO_NAME fast-forwarding; the demo itself switches to normal speed (SLOW_COMMANDS)."""
     _write("clipfind.cfg", [f"volume {VOLUME}", "cl_showfps 0", "fps_max 100", "fastsprites 1",
+                            "cl_crosshair_translucent 1", CROSSHAIR_ON,
                             f"brightness {BRIGHTNESS}", f"gamma {GAMMA}",
                             f"host_framerate {STEP}", f"playdemo {DEMO_NAME}"])
 

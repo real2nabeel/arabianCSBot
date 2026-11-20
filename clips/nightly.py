@@ -227,8 +227,12 @@ def make_clip(clip, info, done):
     os.makedirs(tmp_dir, exist_ok=True)
     followed = os.path.join(tmp_dir, "follow.dem")
     raw = os.path.join(tmp_dir, "raw.mkv")
+    drawn = demo.overlays(clip["demo"], clip["entity"], clip["start"] - 12, clip["end"] + 2)
+    spans = render.sniper_spans(drawn["weapons"], drawn["zooms"], info["kills"], clip["entity"],
+                                clip["start"] - 12, clip["end"] + 2, drawn["anims"])
     demo.follow(clip["demo"], followed, clip["entity"], clip["start"] - 10, clip["end"] + 2, sync_until=clip["start"],
-                commands=(clip["start"] - render.SLOW_LEAD, render.SLOW_COMMANDS), sync_end=clip["end"] + 1)
+                commands=[(clip["start"] - render.SLOW_LEAD, render.SLOW_COMMANDS)] + render.crosshair_commands(spans),
+                sync_end=clip["end"] + 1)
     length = clip["end"] - clip["start"]
     bar_hidden = render.hide_spectator_bar()
     if not bar_hidden:
@@ -236,7 +240,6 @@ def make_clip(clip, info, done):
     took, sync = render.record(followed, clip["start"], length, raw)
     if not sync:
         say(f"  {key}: no time markers seen while recording; the kill feed uses the fixed offset")
-    drawn = demo.overlays(clip["demo"], clip["entity"], clip["start"] - 12, clip["end"] + 2)
     first = clip["moments"][0]
     compose.compose(raw, info["kills"], clip["start"], out_dir + ".part", featured=clip["entity"], sync=sync,
                     bar_hidden=bar_hidden, zooms=drawn["zooms"], bars=drawn["bars"],
