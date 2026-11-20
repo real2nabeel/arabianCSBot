@@ -53,7 +53,8 @@ SYNC_FINE = 0.1           # and during the moment: the renderer times the kill f
 # from the player's weapon and restarts its animation (idle) when that model changes, after the frame's messages: a
 # draw animation sent in the same frame as the weapon switch was wiped out before it showed.
 ANIM_DELAY = 0.05
-SYNC_RE = re.compile(r"\[clipsync\] ([0-9.]+)")
+# Digits, then at most one dot and digits: the console can put a full stop right after the number ("230.25.").
+SYNC_RE = re.compile(r"\[clipsync\] ([0-9]+(?:\.[0-9]+)?)")
 HUD_PRINTCONSOLE = 2
 
 

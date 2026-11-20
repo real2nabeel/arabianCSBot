@@ -68,6 +68,19 @@ class TestHideSpectatorBar(unittest.TestCase):
                 self.assertFalse(render.hide_spectator_bar())     # no layout file: the bar can't be hidden
 
 
+class TestStartWait(unittest.TestCase):
+    def test_waits_until_the_moment(self):
+        self.assertAlmostEqual(render.start_wait(495.0, 495.8), 0.8)
+
+    def test_a_little_late_starts_at_once(self):
+        self.assertEqual(render.start_wait(496.2, 495.8), 0.0)
+        self.assertEqual(render.start_wait(183.1, 181.3), 0.0)
+
+    def test_too_late_is_an_error(self):
+        with self.assertRaises(render.RenderError):
+            render.start_wait(500.0, 495.8)
+
+
 class TestWriteConfig(unittest.TestCase):
     def test_brightness_is_set_before_the_demo_loads(self):
         import os
