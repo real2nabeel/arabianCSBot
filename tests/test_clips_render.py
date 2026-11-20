@@ -117,10 +117,16 @@ class TestSniperCrosshair(unittest.TestCase):
         kills = [kill(10.0, "awp"), kill(12.0, "awp"), kill(13.0, "ak47"), kill(30.0, "scout", k=7),
                  kill(16.5, "awp"), kill(400.0, "awp")]
         zooms = [(11.0, 40), (11.5, 90), (25.0, 10)]
-        # 16.5 joins the first span (a short gap, no blink); 25.0 is its own; 400 is outside the window
+        # 16.5 joins the first span (a short gap, no blink); 25.0 is its own; 400 is outside the window. No kill
+        # with another weapon before the first or after the last: hidden from the window's start to the end.
         self.assertEqual(render.sniper_spans([], zooms, kills, 5, 0, 60),
+                         [(0, 16.5 + render.GUESS_AFTER), (25.0 - render.GUESS_BEFORE, None)])
+        # A rifle kill before and after: those edges stay guessed.
+        more = kills + [kill(5.0, "ak47"), kill(40.0, "deagle")]
+        self.assertEqual(render.sniper_spans([], zooms, more, 5, 0, 60),
                          [(10.0 - render.GUESS_BEFORE, 16.5 + render.GUESS_AFTER),
                           (25.0 - render.GUESS_BEFORE, 25.0 + render.GUESS_AFTER)])
+        self.assertEqual(render.sniper_spans([], [], [kill(10.0, "ak47")], 5, 0, 60), [])
 
 
 if __name__ == "__main__":

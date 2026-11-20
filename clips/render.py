@@ -71,7 +71,8 @@ GUESS_JOIN = 2.0       # guessed spans this close together are one (no crosshair
 def sniper_spans(weapons, zooms, kills, entity, t0=float("-inf"), t1=float("inf")):
     """(from, to) demo times when ``entity`` has a sniper rifle out, from demo.overlays' weapons; ``to`` is None for
     "to the end". Older demos have no weapon lines: then it is guessed around the player's sniper kills and zooms
-    between t0 and t1."""
+    between t0 and t1, and runs on to t0 or the end when no kill with another weapon comes between (a crosshair on an
+    AWP looks far worse than a missing one on a rifle)."""
     spans = []
     if weapons:
         for t, w in sorted(weapons):
@@ -87,6 +88,11 @@ def sniper_spans(weapons, zooms, kills, entity, t0=float("-inf"), t1=float("inf"
             spans[-1] = (spans[-1][0], t + GUESS_AFTER)
         else:
             spans.append((t - GUESS_BEFORE, t + GUESS_AFTER))
+    other = [k["t"] for k in kills if k["k"] == entity and k["w"] not in SNIPERS and t0 <= k["t"] <= t1]
+    if spans and not any(t < spans[0][0] + GUESS_BEFORE for t in other):
+        spans[0] = (t0, spans[0][1])
+    if spans and not any(t > spans[-1][1] - GUESS_AFTER for t in other):
+        spans[-1] = (spans[-1][0], None)
     return spans
 
 
@@ -98,6 +104,8 @@ def crosshair_commands(spans):
         if b is not None:
             out.append((b, CROSSHAIR_ON))
     return out
+
+
 # Debian puts Steam in /usr/games, which cron's minimal PATH leaves out.
 STEAM = os.environ.get("CLIPS_STEAM") or shutil.which("steam") or "/usr/games/steam"
 
