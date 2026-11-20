@@ -40,11 +40,19 @@ class TestMomentText(unittest.TestCase):
         self.assertEqual(self.hooks(), {"4 knife kills in 7.9 seconds", "4 knife kills, 7.9 seconds – CS 1.6",
                                         "Knife only: 4 kills in 7.9 seconds – CS 1.6"})
 
-    def test_clutch_ace_and_specials(self):
+    def test_clutch_streaks_and_specials(self):
         self.assertIn("1v4 clutch on Dust2 – CS 1.6", self.hooks(type="clutch", enemies=4, kills=4, weapons=""))
-        self.assertIn("AWP ace in 4.9 seconds – CS 1.6", self.hooks(kills=5, weapons="awp " * 5, start=0, end=4.9))
+        self.assertIn("Multi kill with the AWP – CS 1.6",
+                      self.hooks(kills=5, headshots=0, weapons="awp " * 5, start=0, end=4.9))
         self.assertIn("No-scope AWP kill – CS 1.6", self.hooks(type="special", kills=1, weapons="awp", extra="noscope"))
-        self.assertIn("4 kills in 7.9 seconds – CS 1.6", self.hooks(weapons="ak47 ak47 deagle m4a1"))
+        self.assertIn("Quad kill: 4 kills in 7.9 seconds – CS 1.6", self.hooks(weapons="ak47 ak47 deagle m4a1"))
+
+    def test_all_headshots(self):
+        self.assertIn("3 Deagle headshots in 7.9 seconds – CS 1.6",
+                      self.hooks(kills=3, headshots=3, weapons="deagle deagle deagle"))
+        self.assertIn("Triple kill, all headshots – CS 1.6 Dust2",
+                      self.hooks(kills=3, headshots=3, weapons="ak47 deagle ak47"))
+        self.assertEqual(clips.moment_text(clip(kills=3, headshots=3, weapons="ak47 deagle ak47"))[2], "#headshot")
 
     def test_same_clip_same_text_and_no_emojis(self):
         a = clips.moment_text(clip())

@@ -49,10 +49,10 @@ class TestWindow(unittest.TestCase):
 
 class TestDescribe(unittest.TestCase):
     def test_fast_multikill(self):
-        self.assertEqual(select.describe(moment()), "4 kills in 2.1 s")
+        self.assertEqual(select.describe(moment()), "Quad kill: 4 kills in 2.1 s")
 
     def test_slow_multikill(self):
-        self.assertEqual(select.describe(moment(end=110.0)), "4 kills")
+        self.assertEqual(select.describe(moment(end=110.0)), "Quad kill: 4 kills")
 
     def test_clutch(self):
         self.assertEqual(select.describe(moment(type="clutch", enemies=3, kills=2)), "1v3 clutch with 2 kills")
@@ -75,8 +75,10 @@ class TestPlan(unittest.TestCase):
                         logged=104.1)
         clips = select.plan([burst, clutch], {"a.dem": self.demo})
         self.assertEqual(len(clips), 1)
-        self.assertEqual(clips[0]["summary"], "1v3 clutch with 4 kills, 4 kills in 2.1 s")
-        self.assertEqual(clips[0]["score"], 110 + 75 // 2)
+        self.assertEqual(clips[0]["logged"], [burst, clutch])
+        # The clip shows 3 of the clutch's kills: it's a 1v3 with 3 kills, scored on those.
+        self.assertEqual(clips[0]["summary"], "1v3 clutch with 3 kills")
+        self.assertEqual(clips[0]["score"], 3 * 10 + 15 + 3 * 10 + 3 * 5)
 
     def test_best_first_low_scores_and_unknown_marks_dropped(self):
         other = moment(id="130000-3", player="Bob", entity=7, score=40, start=190.0, end=190.0, logged=196.0)
@@ -93,6 +95,64 @@ class TestPlan(unittest.TestCase):
     def test_top_limit(self):
         other = moment(id="130000-3", player="Bob", entity=7, score=40, start=190.0, end=190.0, logged=196.0)
         self.assertEqual(len(select.plan([other, moment()], {"a.dem": self.demo}, top=1)), 1)
+
+
+def k(t, w="ak47", hs=0):
+    return dict(kill(t), w=w, hs=hs)
+
+
+class TestScore(unittest.TestCase):
+    def test_kinds_of_kill(self):
+        self.assertEqual([select.kill_points(x) for x in (k(0), k(0, hs=1), k(0, "awp"), k(0, "deagle", 1),
+                                                          k(0, "knife"))], [10, 20, 20, 30, 35])
+
+    def test_burst_and_speed(self):
+        slow = [k(0), k(3), k(6)]
+        fast = [k(0), k(1), k(2)]
+        self.assertEqual(select.score_kills(slow), 30 + 15)
+        self.assertEqual(select.score_kills(fast), 30 + 15 + 30)
+        self.assertEqual(select.best_burst([0, 1, 20, 22, 24, 26]), (4, 6))
+
+    def test_what_we_want_beats_an_easy_clutch(self):
+        easy_clutch = select.score_kills([k(0), k(8, hs=1), k(17), k(25)], clutch_enemies=4)
+        self.assertGreater(select.score_kills([k(0, "knife"), k(2, "knife"), k(5, "knife")]), easy_clutch)
+        self.assertGreater(select.score_kills([k(0, "deagle", 1), k(1.5, "deagle", 1), k(3, "deagle", 1)]), easy_clutch)
+        self.assertGreater(select.score_kills([k(0, "awp"), k(1.5, "awp"), k(3, "awp")]), easy_clutch)
+        self.assertGreater(select.score_kills([k(0, hs=1), k(2, hs=1), k(4, hs=1)]), easy_clutch)
+
+    def test_only_big_clutches_count_much(self):
+        kills = [k(t) for t in (0, 10, 20, 30, 40, 50)]
+        self.assertEqual(select.score_kills(kills, 5) - select.score_kills(kills), 25)
+        self.assertEqual(select.score_kills(kills, 6) - select.score_kills(kills), 60)
+
+
+class TestWhatItShows(unittest.TestCase):
+    def clip(self, *moments, start=0.0, end=40.0):
+        return {"entity": 5, "start": start, "end": end, "moments": list(moments)}
+
+    def test_clutch_counts_only_the_kills_shown(self):
+        clutch = moment(type="clutch", enemies=4, kills=4, extra="1v4")
+        play = select.what_it_shows(self.clip(clutch, start=20.0), [k(10), k(15), k(25), k(30, hs=1)])
+        self.assertEqual((play["type"], play["enemies"], play["kills"], play["headshots"]), ("clutch", 2, 2, 1))
+        self.assertEqual(select.describe(play), "1v2 clutch with 2 kills")
+
+    def test_team_kills_and_others_dont_count(self):
+        tk = dict(k(5), vt=2)
+        play = select.what_it_shows(self.clip(moment()), [k(1), k(2, hs=1), tk, dict(k(3), k=7), k(4, "deagle", 1)])
+        self.assertEqual((play["type"], play["kills"], play["weapons"]), ("multikill", 3, "ak47 ak47 deagle"))
+        self.assertEqual(play["score"], select.score_kills([k(1), k(2, hs=1), k(4, "deagle", 1)]))
+
+    def test_special_keeps_its_bonus(self):
+        noscope = moment(type="special", kills=1, weapons="awp", extra="noscope air")
+        play = select.what_it_shows(self.clip(noscope), [k(3, "awp")])
+        self.assertEqual((play["type"], play["extra"], play["score"]), ("special", "air noscope", 20 + 30 + 10))
+        self.assertEqual(select.describe(play), "no-scope AWP kill")
+
+
+class TestStreakName(unittest.TestCase):
+    def test_names(self):
+        self.assertEqual([select.streak_name(n) for n in (1, 2, 3, 5, 6, 12)],
+                         ["", "Double kill", "Triple kill", "Multi kill", "Rampage", "Unstoppable"])
 
 
 if __name__ == "__main__":

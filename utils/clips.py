@@ -2,6 +2,8 @@
 import datetime as dt
 import zlib
 
+from clips.select import streak_name
+
 APPROVE = "👍"
 REJECT = "❌"
 
@@ -19,15 +21,16 @@ WEAPON_WORDS = {"ak47": "AK-47", "m4a1": "M4A1", "awp": "AWP", "deagle": "Deagle
 HOOKS = {
     "clutch": ["CS 1.6 – 1v{n} clutch with {k} kills", "1v{n} clutch on Dust2 – CS 1.6",
                "Last one alive in a 1v{n} – CS 1.6 clutch"],
-    "ace": ["CS 1.6 ace in {s} seconds", "Full ace on Dust2 in {s} seconds – CS 1.6",
-            "5 kills, one round – CS 1.6 ace"],
-    "ace_weapon": ["{W} ace in {s} seconds – CS 1.6", "CS 1.6 {W} ace on Dust2", "Full {W} ace in {s} seconds – CS 1.6"],
     "knife": ["{k} knife kills in {s} seconds", "{k} knife kills, {s} seconds – CS 1.6",
               "Knife only: {k} kills in {s} seconds – CS 1.6"],
-    "weapon": ["{k} {W} kills in {s} seconds – CS 1.6", "{W} {k}K in {s} seconds – CS 1.6 Dust2",
-               "{k} kills with the {W} in {s} seconds"],
-    "multikill": ["{k} kills in {s} seconds – CS 1.6", "{k}K in {s} seconds on Dust2 – CS 1.6",
-                  "{k} kills, {s} seconds – CS 1.6 Dust2"],
+    "headshots": ["{k} headshots in {s} seconds – CS 1.6", "{N}, all headshots – CS 1.6 Dust2",
+                  "{k} kills, {k} headshots – CS 1.6"],
+    "headshots_weapon": ["{k} {W} headshots in {s} seconds – CS 1.6", "{W} {N}, all headshots – CS 1.6",
+                         "{k} {W} headshots in a row – CS 1.6"],
+    "weapon": ["{k} {W} kills in {s} seconds – CS 1.6", "{W} {N} in {s} seconds – CS 1.6 Dust2",
+               "{N} with the {W} – CS 1.6"],
+    "multikill": ["{N}: {k} kills in {s} seconds – CS 1.6", "{k} kills in {s} seconds on Dust2 – CS 1.6",
+                  "{N} on Dust2 – CS 1.6"],
     "untimed": ["{k} kills – CS 1.6 Dust2", "{k}K on Dust2 – CS 1.6"],
     "noscope": ["No-scope {W} kill – CS 1.6", "No scope, no problem – CS 1.6 {W}"],
     "double": ["One shot, two kills – CS 1.6 {W}", "Two kills, one bullet – CS 1.6"],
@@ -39,7 +42,7 @@ QUESTIONS = {
     "kills": ["Rate this from 1 to 10.", "Could you do this?", "How many would you have got?"],
     "special": ["Skill or luck?", "Rate this from 1 to 10."],
 }
-TAGS = {"clutch": "#clutch", "ace": "#ace", "knife": "#knife", "awp": "#awp", "kills": "#multikill"}
+TAGS = {"clutch": "#clutch", "headshot": "#headshot", "knife": "#knife", "awp": "#awp", "kills": "#multikill"}
 
 
 def _main_moment(meta):
@@ -68,15 +71,17 @@ def moment_text(meta):
     tags = set((m.get("extra") or "").split())
     one = WEAPON_WORDS.get(weapons[0], weapons[0].upper()) if weapons and len(set(weapons)) == 1 else ""
     span = float(m.get("end") or 0) - float(m.get("start") or 0)
+    all_hs = k >= 2 and int(m.get("headshots") or 0) >= k
     if kind == "clutch":
         group, ask, tag = "clutch", "clutch", "clutch"
-    elif kind == "multikill" and k >= 5:
-        group, ask, tag = ("ace_weapon" if one and one != "knife" else "ace"), "kills", "ace"
     elif kind == "multikill" and span <= 0:
         group, ask, tag = "untimed", "kills", "kills"
+    elif kind == "multikill" and one == "knife":
+        group, ask, tag = "knife", "kills", "knife"
+    elif kind == "multikill" and all_hs:
+        group, ask, tag = ("headshots_weapon" if one else "headshots"), "kills", "headshot"
     elif kind == "multikill":
-        group = "knife" if one == "knife" else ("weapon" if one else "multikill")
-        ask, tag = "kills", ("knife" if one == "knife" else "awp" if one == "AWP" else "kills")
+        group, ask, tag = ("weapon" if one else "multikill"), "kills", ("awp" if one == "AWP" else "kills")
     elif "noscope" in tags:
         group, ask, tag = "noscope", "special", "awp"
     elif "double" in tags:
@@ -85,7 +90,7 @@ def moment_text(meta):
         group, ask, tag = "air", "special", ""
     else:
         group, ask, tag = "single", "special", ("knife" if one == "knife" else "")
-    values = {"k": k, "n": n, "s": _seconds(span), "W": one or "weapon"}
+    values = {"k": k, "n": n, "s": _seconds(span), "W": one or "weapon", "N": streak_name(k) or f"{k} kills"}
     hook = _pick(HOOKS[group], meta).format(**values)
     hook = hook[0].upper() + hook[1:]
     question = _pick(QUESTIONS[ask], meta, "q").format(**values)

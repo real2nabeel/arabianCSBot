@@ -12,6 +12,8 @@ each line on a soft dark background. Writes hq.mp4 (1080x1920 60 fps, for social
 import os, shutil, struct, subprocess, tempfile
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
+from clips.select import streak_name
+
 HL = os.path.join(os.path.expanduser(os.environ.get("CLIPS_HL_DIR", "~/.steam/debian-installation/steamapps/common/Half-Life")), "cstrike")
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "host", "logo.png")
@@ -275,10 +277,11 @@ def headline(moments, player, round_no=None):
     tags = set((m.get("extra") or "").split())
     one = WEAPON_NAMES.get(weapons[0], weapons[0].upper()) if weapons and len(set(weapons)) == 1 else ""
     kind = m.get("type")
+    hs = int(m.get("headshots") or 0)
     if kind == "clutch":
         parts = [(f"1v{int(m.get('enemies') or 0)}", True), (" CLUTCH", False)]
-    elif kind == "multikill" and kills >= 5:
-        parts = [("ACE", True)] + ([(f" · {one}", False)] if one else [])
+    elif kind == "multikill" and streak_name(kills):
+        parts = [(streak_name(kills).upper(), True)] + ([(f" · {one}", False)] if one else [])
     elif kind == "multikill":
         parts = [(str(kills), True), (f" {one} KILLS" if one else " KILLS", False)]
     elif "noscope" in tags:
@@ -290,8 +293,7 @@ def headline(moments, player, round_no=None):
     else:
         parts = [(one or "KNIFE", True), (" KILL", False)]
     details = [player]
-    hs = int(m.get("headshots") or 0)
-    if kind == "clutch" and kills:
+    if kind in ("clutch", "multikill") and kills:
         details.append(f"{kills} kill{'s' if kills != 1 else ''}")
     if hs:
         details.append(f"{hs} headshot{'s' if hs != 1 else ''}")
@@ -328,6 +330,16 @@ def _clip_text(draw, text, font, width):
 
 DOTS_W = 230             # room kept on the right of the headline for the kill dots
 DOTS_LABEL_W = 130       # and on the right of the details line for their "3 / 4"
+LOGO_SIZE = 116
+
+
+def play_y(game_top):    # top of the play's line (the headline), above the details line
+    return game_top - 128
+
+
+def _shadowed(d, xy, text, font, fill):
+    d.text((xy[0] + 3, xy[1] + 4), text, font=font, fill=(0, 0, 0, 150))
+    d.text(xy, text, font=font, fill=fill)
 
 
 def band_image(parts, details, game_top, logo=LOGO):
@@ -339,19 +351,21 @@ def band_image(parts, details, game_top, logo=LOGO):
     shade = shade.filter(ImageFilter.GaussianBlur(30))
     img.paste(Image.new("RGBA", img.size, (0, 0, 0, 255)), mask=shade)
     d = ImageDraw.Draw(img)
+    # The server is the big line (the logo and its name), the play a smaller one under it.
+    text_x = BAND_X
     if logo and os.path.exists(logo):
         lg = Image.open(logo).convert("RGBA")
-        lg.thumbnail((78, 78), Image.LANCZOS)
+        lg.thumbnail((LOGO_SIZE, LOGO_SIZE), Image.LANCZOS)
         img.alpha_composite(lg, (BAND_X, BAND_TOP))
-    d.text((BAND_X + 94, BAND_TOP + 12), "ARABIAN SERVERS", font=_font(TEXT_FONT, 28), fill=BAND_WHITE)
-    d.text((BAND_X + 94, BAND_TOP + 48), "DUST2 ONLY · SINCE 2013", font=_font(TEXT_FONT, 20), fill=BAND_MUTED)
-    big = _fit(d, parts, BAND_FONT, 104, 1080 - 2 * BAND_X - DOTS_W)
-    y = game_top - 160
+        text_x = BAND_X + LOGO_SIZE + 22
+    name = _fit(d, [("ARABIAN SERVERS", False)], BAND_FONT, 92, 1080 - BAND_X - text_x)
+    _shadowed(d, (text_x, BAND_TOP - 8), "ARABIAN SERVERS", name, BAND_WHITE)
+    d.text((text_x + 2, BAND_TOP + 86), "DUST2 ONLY · SINCE 2013", font=_font(TEXT_FONT, 26), fill=SAND)
+    play = _fit(d, parts, BAND_FONT, 60, 1080 - 2 * BAND_X - DOTS_W)
     x = BAND_X
     for text, accent in parts:
-        d.text((x + 3, y + 4), text, font=big, fill=(0, 0, 0, 150))
-        d.text((x, y), text, font=big, fill=SAND if accent else BAND_WHITE)
-        x += d.textlength(text, font=big)
+        _shadowed(d, (x, play_y(game_top)), text, play, SAND if accent else BAND_WHITE)
+        x += d.textlength(text, font=play)
     room = 1080 - 2 * BAND_X - DOTS_LABEL_W     # the dots' "3 / 4" sits at the right end of this line
     small = _fit(d, [(details, False)], TEXT_FONT, 32, room, smallest=24)
     d.text((BAND_X, game_top - 50), _clip_text(d, details, small, room), font=small, fill=BAND_MUTED)
@@ -366,7 +380,7 @@ def dots_image(filled, total, game_top):
     if total > 6:      # many kills: smaller dots so they keep to their corner
         r, gap = 12, 8
     x0 = 1080 - BAND_X - total * 2 * r - (total - 1) * gap
-    y = game_top - 160 + 40
+    y = play_y(game_top) + 14
     for i in range(total):
         box = (x0 + i * (2 * r + gap), y, x0 + i * (2 * r + gap) + 2 * r, y + 2 * r)
         if i < filled:
