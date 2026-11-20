@@ -3,6 +3,6 @@
 * * * * * cd $HOME/discord_bots/arabian_bot/arabianCSBot && /usr/bin/python3 -m clips.nightly --if-requested >> $HOME/clips/nightly.log 2>&1
 # Every hour: download new demos and lists without rendering (the game server keeps its demos for one day).
 17 * * * * cd $HOME/discord_bots/arabian_bot/arabianCSBot && /usr/bin/python3 -m clips.nightly --fetch-only >> $HOME/clips/nightly.log 2>&1
-# Every day at 06:00 (this machine runs on Palestine time, Asia/Gaza): make the 20 best new clips (highest score
+# Every day at 04:00 (this machine runs on Palestine time, Asia/Gaza): make the 20 best new clips (highest score
 # first; demos older than 4 days are dropped, so the rest are never made). The bot posts each one for review. If Steam is busy because the account is in a game, the run stops.
-0 6 * * * cd $HOME/discord_bots/arabian_bot/arabianCSBot && /usr/bin/python3 -m clips.nightly --limit 20 >> $HOME/clips/nightly.log 2>&1
+0 4 * * * cd $HOME/discord_bots/arabian_bot/arabianCSBot && /usr/bin/python3 -m clips.nightly --limit 20 >> $HOME/clips/nightly.log 2>&1
