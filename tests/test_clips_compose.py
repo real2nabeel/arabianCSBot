@@ -164,14 +164,15 @@ class TestHeadline(unittest.TestCase):
 
     def test_multikill_with_one_weapon(self):
         text, accent, details = self.text(moment())
-        self.assertEqual(text, "4 KNIFE KILLS")
-        self.assertEqual(accent, ["4"])
-        self.assertEqual(details, "Melo  ·  2 headshots  ·  7.9 s  ·  Round 1")
+        self.assertEqual(text, "QUAD KILL · KNIFE")
+        self.assertEqual(accent, ["QUAD KILL"])
+        self.assertEqual(details, "Melo  ·  4 kills  ·  2 headshots  ·  7.9 s  ·  Round 1")
 
-    def test_mixed_weapons_and_ace(self):
-        self.assertEqual(self.text(moment(weapons="ak47 ak47 deagle"))[0], "4 KILLS")
-        self.assertEqual(self.text(moment(kills=5, weapons="awp " * 5))[0], "ACE · AWP")
-        self.assertEqual(self.text(moment(kills=5, weapons="ak47 m4a1 ak47 ak47 ak47"))[0], "ACE")
+    def test_streak_names(self):
+        self.assertEqual(self.text(moment(weapons="ak47 ak47 deagle"))[0], "QUAD KILL")
+        self.assertEqual(self.text(moment(kills=5, weapons="awp " * 5))[0], "MULTI KILL · AWP")
+        self.assertEqual(self.text(moment(kills=6, weapons="ak47 m4a1 ak47 ak47 ak47"))[0], "RAMPAGE")
+        self.assertEqual(self.text(moment(kills=12, weapons="ak47 m4a1"))[0], "UNSTOPPABLE")
 
     def test_clutch_and_specials(self):
         text, accent, details = self.text(moment(type="clutch", enemies=3, kills=2, headshots=0, weapons="", extra="1v3"))
@@ -182,7 +183,7 @@ class TestHeadline(unittest.TestCase):
 
     def test_highest_score_names_the_clip(self):
         low = moment(type="special", kills=1, weapons="awp", extra="noscope", score=40)
-        self.assertEqual(self.text(low, moment())[0], "4 KNIFE KILLS")
+        self.assertEqual(self.text(low, moment())[0], "QUAD KILL · KNIFE")
 
 
 class TestBand(unittest.TestCase):

@@ -20,6 +20,17 @@ WEAPON_NAMES = {
 }
 
 
+# What the server's kill-streak announcer (AQS) calls N kills; 4 has no announcement there, so it gets the name of
+# the sound AQS ships for it.
+STREAKS = {2: "Double kill", 3: "Triple kill", 4: "Quad kill", 5: "Multi kill", 6: "Rampage", 7: "Killing spree",
+           8: "Dominating", 9: "Impressive"}
+
+
+def streak_name(kills):
+    """"Triple kill" for 3 kills, ... "Unstoppable" from 10; "" below 2."""
+    return "Unstoppable" if kills >= 10 else STREAKS.get(kills, "")
+
+
 def weapon_name(code):
     return WEAPON_NAMES.get(code, code.upper())
 
@@ -52,9 +63,9 @@ def describe(moment):
     extra = moment.get("extra", "").split()
     weapons = moment.get("weapons", "").split()
     if kind == "multikill":
-        text = f"{kills} kills"
+        text = f"{streak_name(kills)}: {kills} kills" if kills >= 3 else f"{kills} kills"
         span = moment["end"] - moment["start"]
-        if span <= 6:
+        if 0 < span <= 6:
             text += f" in {span:.1f} s"
         return text
     if kind == "clutch":
@@ -76,7 +87,9 @@ def plan(moments, demos, top=8, min_score=30):
     """Pick clips from the day's moments.
 
     ``demos``: {path: scan result} (see clips.demo.scan). Returns clip dicts, best first:
-    {"key", "demo", "map", "entity", "player", "team", "start", "end", "score", "moments", "summary"}.
+    {"key", "demo", "map", "entity", "player", "team", "start", "end", "score", "moments", "summary", "logged"}.
+    ``moments`` is one moment describing what the clip shows, scored on it (``what_it_shows``); ``logged`` the
+    plugin's moments it came from. ``min_score`` applies to the plugin's scores.
     """
     found = []
     for m in moments:
@@ -111,13 +124,92 @@ def plan(moments, demos, top=8, min_score=30):
             merged.append(c)
 
     for c in merged:
-        parts = []
-        for m in sorted(c["moments"], key=lambda m: -m["score"]):
-            text = describe(m)
-            if text not in parts:
-                parts.append(text)
-        c["summary"] = ", ".join(parts[:2])
         first = c["moments"][0]
         c["key"] = f"{first.get('date', '')[:10]}_{first['id']}".replace(" ", "_")
+        c["logged"] = c["moments"]
+        play = what_it_shows(c, demos[c["demo"]]["kills"])
+        c["moments"] = [play]
+        c["score"] = play["score"]
+        c["summary"] = describe(play)
     merged.sort(key=lambda c: -c["score"])
     return merged[:top]
+
+
+# ---- scoring a clip by what it shows -------------------------------------------------------------------------------
+# The plugin's moments only say where to look. A clip is scored on the followed player's kills inside it (from the
+# demo's kill lines), so a long clutch trimmed to 40 seconds counts the kills it still shows. What we want most: many
+# kills in a short time, knife kills, headshots (Deagle ones above all), and AWP kills, which count like headshots.
+KILL_POINTS = 10        # any kill
+HEADSHOT_POINTS = 10    # added for a headshot, or for an AWP / Scout kill
+DEAGLE_HS_POINTS = 20   # added instead for a Deagle headshot
+KNIFE_POINTS = 25       # added for a knife kill
+BURST_GAP = 4.0         # most seconds between two kills of one burst (as the plugin)
+BURST_POINTS = 15       # per kill past the second in the best burst
+FAST_GAP = 1.5          # a burst averaging this many seconds or less between kills is fast...
+FAST_POINTS = 10        # ...and gets this per kill
+CLUTCH_REAL = 6         # a clutch against this many or more is a real play
+CLUTCH_SMALL = 5        # per enemy for a smaller clutch
+CLUTCH_BIG = 60         # for a real one, plus CLUTCH_SMALL x2 per enemy past CLUTCH_REAL
+EXTRA_POINTS = {"noscope": 30, "double": 35, "air": 10}   # from the plugin: once each per clip
+SNIPERS = ("awp", "scout")
+
+
+def kill_points(k):
+    if k["w"] == "knife":
+        return KILL_POINTS + KNIFE_POINTS
+    if k["hs"] and k["w"] == "deagle":
+        return KILL_POINTS + DEAGLE_HS_POINTS
+    if k["hs"] or k["w"] in SNIPERS:
+        return KILL_POINTS + HEADSHOT_POINTS
+    return KILL_POINTS
+
+
+def best_burst(times):
+    """The longest run of kills with at most BURST_GAP seconds between them: (kills, seconds)."""
+    best, run = (0, 0.0), []
+    for t in sorted(times):
+        run = run + [t] if run and t - run[-1] <= BURST_GAP else [t]
+        if len(run) > best[0] or (len(run) == best[0] and run[-1] - run[0] < best[1]):
+            best = (len(run), run[-1] - run[0])
+    return best
+
+
+def score_kills(kills, clutch_enemies=0, extras=()):
+    """Score for a clip showing ``kills`` (the followed player's, in order). ``clutch_enemies``: the N of the 1vN
+    clutch the clip shows (0: no clutch)."""
+    score = sum(kill_points(k) for k in kills)
+    n, span = best_burst([k["t"] for k in kills])
+    if n >= 3:
+        score += BURST_POINTS * (n - 2)
+        if span / (n - 1) <= FAST_GAP:
+            score += FAST_POINTS * n
+    if clutch_enemies >= CLUTCH_REAL:
+        score += CLUTCH_BIG + 2 * CLUTCH_SMALL * (clutch_enemies - CLUTCH_REAL)
+    elif clutch_enemies:
+        score += CLUTCH_SMALL * clutch_enemies
+    return score + sum(EXTRA_POINTS.get(e, 0) for e in set(extras))
+
+
+def what_it_shows(clip, kills):
+    """One moment describing the clip as it will be seen, in the plugin's format (type, kills, headshots, weapons,
+    extra, enemies, start/end, score), so the headline and post text describe what's on screen. A clutch is 1vN
+    with N the kills shown (at most the enemies it started against): a 1v4 that shows 2 kills is a 1v2. ``start`` and
+    ``end`` are the first and last kill's demo times."""
+    logged = clip["moments"]
+    own = sorted((k for k in kills if k["k"] == clip["entity"] and k.get("vt") != k.get("kt")
+                  and clip["start"] <= k["t"] <= clip["end"]), key=lambda k: k["t"])
+    extras = sorted({e for m in logged for e in (m.get("extra") or "").split() if e in EXTRA_POINTS})
+    clutches = [m for m in logged if m["type"] == "clutch"]
+    enemies = min(len(own), max(int(m.get("enemies") or 0) for m in clutches)) if clutches else 0
+    if enemies:
+        kind = "clutch"
+    elif len(own) >= 3 or (len(own) == 2 and not extras):
+        kind = "multikill"
+    else:
+        kind = "special"
+    first = logged[0]
+    return {"id": first["id"], "date": first.get("date", ""), "map": first.get("map", ""), "round": first.get("round"),
+            "type": kind, "kills": len(own), "headshots": sum(1 for k in own if k["hs"]),
+            "weapons": " ".join(k["w"] for k in own), "extra": " ".join(extras), "enemies": enemies,
+            "start": own[0]["t"] if own else clip["start"], "end": own[-1]["t"] if own else clip["start"],
+            "score": score_kills(own, enemies, extras)}
