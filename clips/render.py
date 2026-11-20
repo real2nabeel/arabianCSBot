@@ -63,37 +63,64 @@ SNIPERS = ("awp", "scout", "g3sg1", "sg550")
 CROSSHAIR_COLOR = os.environ.get("CLIPS_CROSSHAIR_COLOR", "50 250 50")   # Nabeel's own colour
 CROSSHAIR_OFF = 'cl_crosshair_color "0 0 0"'
 CROSSHAIR_ON = f'cl_crosshair_color "{CROSSHAIR_COLOR}"'
-GUESS_BEFORE = 2.5     # demos from before the plugin named weapons: hide it this long before a sniper kill or zoom...
-GUESS_AFTER = 1.0      # ...and this long after
-GUESS_JOIN = 2.0       # guessed spans this close together are one (no crosshair blinking on between AWP shots)
+# Demos from before the plugin named weapons are read from the player's weapon animations instead. Shots animate on
+# the player's own screen, so the lines are draws, reloads and idles; an AWP only sends idle (0), reload (4) and draw
+# (5). Any other animation means another weapon is out. A 5 is the AWP's draw, or the Deagle's or M4A1's: it is the
+# AWP when the next thing seen is an AWP kill or a zoom; two within QUICK seconds are a quick switch, away and back.
+SNIPER_NEUTRAL = (0, 4)
+SNIPER_DRAW = 5
+QUICK = 1.0
+GUESS_BEFORE = 2.5     # a sniper kill or zoom with no draw seen before it: it came out this long before at most
 
 
-def sniper_spans(weapons, zooms, kills, entity, t0=float("-inf"), t1=float("inf")):
-    """(from, to) demo times when ``entity`` has a sniper rifle out, from demo.overlays' weapons; ``to`` is None for
-    "to the end". Older demos have no weapon lines: then it is guessed around the player's sniper kills and zooms
-    between t0 and t1, and runs on to t0 or the end when no kill with another weapon comes between (a crosshair on an
-    AWP looks far worse than a missing one on a rifle)."""
-    spans = []
-    if weapons:
-        for t, w in sorted(weapons):
-            if w in SNIPERS and (not spans or spans[-1][1] is not None):
-                spans.append((t, None))
-            elif w not in SNIPERS and spans and spans[-1][1] is None:
-                spans[-1] = (spans[-1][0], t)
-        return spans
-    marks = sorted(t for t in [k["t"] for k in kills if k["k"] == entity and k["w"] in SNIPERS]
-                   + [t for t, fov in zooms if 0 < fov < 90] if t0 <= t <= t1)
-    for t in marks:
-        if spans and t - GUESS_BEFORE <= spans[-1][1] + GUESS_JOIN:
-            spans[-1] = (spans[-1][0], t + GUESS_AFTER)
+def _from_animations(zooms, kills, entity, t0, t1, anims):
+    """(time, sniper out?) changes for a demo without weapon lines."""
+    within = lambda t: t0 <= t <= t1   # noqa: E731
+    ev = sorted([(k["t"], "sniper" if k["w"] in SNIPERS else "other") for k in kills
+                 if k["k"] == entity and within(k["t"])]
+                + [(t, "sniper") for t, fov in zooms if 0 < fov < 90 and within(t)]
+                + [(t, "draw" if a == SNIPER_DRAW else "other") for t, a in anims
+                   if a not in SNIPER_NEUTRAL and within(t)])
+    state = next((kind for _, kind in ev if kind != "draw"), "other") == "sniper"   # what the window opens with
+    changes, before = [(t0, state)], {}
+    for i, (t, kind) in enumerate(ev):
+        prev = ev[i - 1] if i else None
+        nxt = ev[i + 1] if i + 1 < len(ev) else None
+        if kind == "sniper":
+            new = True
+            if not state:   # it came out without a draw we could read: shortly before
+                t = max(prev[0] if prev else t0, t - GUESS_BEFORE)
+        elif kind == "other":
+            new = False
+        elif nxt and nxt[1] == "sniper":
+            new = True
+        elif nxt and nxt[1] == "draw" and nxt[0] - t <= QUICK:
+            new = not state                     # away...
+        elif prev and prev[1] == "draw" and t - prev[0] <= QUICK:
+            new = before[i - 1]                 # ...and straight back
         else:
-            spans.append((t - GUESS_BEFORE, t + GUESS_AFTER))
-    other = [k["t"] for k in kills if k["k"] == entity and k["w"] not in SNIPERS and t0 <= k["t"] <= t1]
-    if spans and not any(t < spans[0][0] + GUESS_BEFORE for t in other):
-        spans[0] = (t0, spans[0][1])
-    if spans and not any(t > spans[-1][1] - GUESS_AFTER for t in other):
-        spans[-1] = (spans[-1][0], None)
-    return spans
+            new = False
+        before[i] = state
+        if new != state:
+            changes.append((t, new))
+            state = new
+    return changes
+
+
+def sniper_spans(weapons, zooms, kills, entity, t0=float("-inf"), t1=float("inf"), anims=()):
+    """(from, to) demo times when ``entity`` has a sniper rifle out between t0 and t1; ``to`` is None for "to the
+    end". From demo.overlays' weapons, or for older demos its anims (see above) with the player's kills and zooms."""
+    if weapons:
+        changes = [(t, w in SNIPERS) for t, w in sorted(weapons)]
+    else:
+        changes = _from_animations(zooms, kills, entity, t0, t1, anims)
+    spans = []
+    for t, out in changes:
+        if out and (not spans or spans[-1][1] is not None):
+            spans.append((t, None))
+        elif not out and spans and spans[-1][1] is None:
+            spans[-1] = (spans[-1][0], t)
+    return [s for s in spans if s[1] is None or s[1] > s[0]]
 
 
 def crosshair_commands(spans):

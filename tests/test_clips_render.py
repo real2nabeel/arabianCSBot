@@ -113,19 +113,27 @@ class TestSniperCrosshair(unittest.TestCase):
                          [(10.0, 'cl_crosshair_color "0 0 0"'), (14.0, 'cl_crosshair_color "50 250 50"'),
                           (20.0, 'cl_crosshair_color "0 0 0"')])
 
-    def test_guessed_for_older_demos(self):
-        kills = [kill(10.0, "awp"), kill(12.0, "awp"), kill(13.0, "ak47"), kill(30.0, "scout", k=7),
-                 kill(16.5, "awp"), kill(400.0, "awp")]
-        zooms = [(11.0, 40), (11.5, 90), (25.0, 10)]
-        # 16.5 joins the first span (a short gap, no blink); 25.0 is its own; 400 is outside the window. No kill
-        # with another weapon before the first or after the last: hidden from the window's start to the end.
-        self.assertEqual(render.sniper_spans([], zooms, kills, 5, 0, 60),
-                         [(0, 16.5 + render.GUESS_AFTER), (25.0 - render.GUESS_BEFORE, None)])
-        # A rifle kill before and after: those edges stay guessed.
-        more = kills + [kill(5.0, "ak47"), kill(40.0, "deagle")]
-        self.assertEqual(render.sniper_spans([], zooms, more, 5, 0, 60),
-                         [(10.0 - render.GUESS_BEFORE, 16.5 + render.GUESS_AFTER),
-                          (25.0 - render.GUESS_BEFORE, 25.0 + render.GUESS_AFTER)])
+    def test_older_demo_quick_switch_to_the_deagle(self):
+        # A real clip (times from its start): two quick 5s before it (AWP out), three AWP kills, then a quick switch:
+        # Deagle out at 8.37, AWP back at 8.74.
+        anims = [(-10.73, 5), (-10.73, 3), (-10.31, 2), (-9.97, 5), (-9.67, 3), (-8.2, 0), (-7.74, 5), (-6.23, 0),
+                 (-4.82, 5), (-3.23, 0), (-1.55, 5), (-1.36, 5), (0.16, 0), (6.58, 0), (8.37, 5), (8.74, 5),
+                 (10.22, 0)]
+        kills = [kill(3.0, "awp"), kill(4.59, "awp"), kill(8.33, "awp")]
+        self.assertEqual(render.sniper_spans([], [], kills, 5, -12, 12.8, anims), [(-1.55, 8.37), (8.74, None)])
+
+    def test_older_demo_other_weapons(self):
+        anims = [(1.0, 2),                 # AK-47 draw
+                 (5.0, 5), (9.0, 5),       # AWP draw (a kill follows), then a 5 with no AWP after it: the Deagle
+                 (20.0, 5), (20.5, 4)]     # a 5 then a reload, then a zoom: the AWP
+        kills = [kill(7.0, "awp")]
+        self.assertEqual(render.sniper_spans([], [(22.0, 40)], kills, 5, 0, 30, anims), [(5.0, 9.0), (20.0, None)])
+
+    def test_older_demo_without_animations(self):
+        kills = [kill(10.0, "awp"), kill(20.0, "ak47"), kill(30.0, "awp")]
+        # Opens with the AWP; the AK kill ends it; the next AWP kill came out at most GUESS_BEFORE earlier.
+        self.assertEqual(render.sniper_spans([], [], kills, 5, 0, 60),
+                         [(0, 20.0), (30.0 - render.GUESS_BEFORE, None)])
         self.assertEqual(render.sniper_spans([], [], [kill(10.0, "ak47")], 5, 0, 60), [])
 
 

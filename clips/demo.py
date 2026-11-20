@@ -224,9 +224,9 @@ def overlays(src, entity, t0, t1):
     the plugin's lines: {"zooms": [(demo time, fov)] (0 or 90: not zoomed; for the sniper scope's crosshair),
     "bars": [(demo time, seconds, percent already done)] (bomb plant/defuse bar; 0 seconds: taken away),
     "weapons": [(demo time, weapon)] (what the player switched to, starting with the one held at t0; empty for demos
-    from before the plugin sent these)}."""
+    from before the plugin sent these), "anims": [(demo time, animation)] (the player's weapon animations)}."""
     d = open(src, "rb").read()
-    zooms, bars, weapons, seen = [], [], [], set()
+    zooms, bars, weapons, anims, seen = [], [], [], [], set()
     for _, offset, length in _entries(d):
         for _, _, t, msg in _frames(d, offset, offset + length):
             if msg is None or t > t1:
@@ -254,7 +254,12 @@ def overlays(src, entity, t0, t1):
                         seen.add(m.group(0))
                         pct = int(m.group(4) or 0) if m.group(2) == b"BarTime2" else 0
                         bars.append((round(t, 3), int(m.group(3)), pct))
-    return {"zooms": zooms, "bars": bars, "weapons": weapons}
+            if b"[clips] anim" in body:
+                for m in _ANIM.finditer(body):
+                    if int(m.group(1)) == entity and m.group(0) not in seen:
+                        seen.add(m.group(0))
+                        anims.append((round(t, 3), int(m.group(2))))
+    return {"zooms": zooms, "bars": bars, "weapons": weapons, "anims": anims}
 
 
 def follow(src, dst, entity, t0, t1, sync_until=None, commands=None, sync_end=None):
