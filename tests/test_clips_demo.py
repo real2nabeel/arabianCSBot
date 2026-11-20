@@ -160,6 +160,17 @@ class TestCommands(unittest.TestCase):
               for cmd in (b"echo a", b"crosshair 0", b"crosshair 1")}
         self.assertEqual(at, {b"echo a": 0.5, b"crosshair 0": 1.0, b"crosshair 1": 2.0})
 
+    def test_a_list_of_one_command(self):
+        import os
+        import tempfile
+        times = [i * 0.5 for i in range(8)]
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = os.path.join(tmp, "a.dem"), os.path.join(tmp, "b.dem")
+            open(src, "wb").write(_demo_bytes(times, b""))
+            demo.follow(src, dst, entity=3, t0=10, t1=11, commands=[(1.0, "echo a")])
+            out = open(dst, "rb").read()
+        self.assertEqual(out.count(b"\x09echo a\n\x00"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
