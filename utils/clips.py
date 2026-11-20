@@ -181,3 +181,27 @@ def run_report(status):
     if state == "error":
         return f"⚠️ Clip run failed{by}: {status.get('error') or 'unknown error'}"
     return None
+
+
+QUEUE_PAGE = 20
+
+
+def queue_page(queue, page=1, per_page=QUEUE_PAGE, name_width=16):
+    """(text, pages) for /clips-queue: one page of the clips the host can still make (queue.json from clips/nightly.py),
+    best first, as a fixed-width table. Each title is the clip's post title; the player's name comes last so a long
+    or right-to-left name can't break the columns."""
+    clips = (queue or {}).get("clips") or []
+    pages = max(1, -(-len(clips) // per_page))
+    page = min(max(1, page), pages)
+    rows = clips[(page - 1) * per_page: page * per_page]
+    if not rows:
+        return "No clips are waiting to be made.", 1
+    titles = [moment_text(c)[0] for c in rows]
+    width = max(len(t) for t in titles)
+    first = (page - 1) * per_page + 1
+    lines = [f"{'#':>3}  {'Score':>5}  {'Title':<{width}}  Player"]
+    for i, (c, t) in enumerate(zip(rows, titles)):
+        name = str(c.get("player", ""))
+        name = name if len(name) <= name_width else name[:name_width - 1] + "…"
+        lines.append(f"{first + i:>3}  {c.get('score', 0):>5}  {t:<{width}}  {name}")
+    return "\n".join(lines), pages

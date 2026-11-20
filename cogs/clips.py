@@ -332,6 +332,31 @@ class Clips(commands.Cog):
     async def before_watch(self):
         await self.bot.wait_until_ready()
 
+    @app_commands.command(name="clips-queue", description="Clips that can be made next, best first")
+    @app_commands.describe(page="Page of the list (20 clips per page)")
+    @app_commands.default_permissions(manage_messages=True)
+    async def clips_queue(self, interaction: discord.Interaction, page: app_commands.Range[int, 1, 100] = 1):
+        if not CLIPS_REVIEW_CHANNEL_ID:
+            await interaction.response.send_message("Clips are turned off.", ephemeral=True)
+            return
+        loop = asyncio.get_running_loop()
+        queue = await loop.run_in_executor(None, self._read_json, self._control("queue.json"))
+        if queue is None:
+            await interaction.response.send_message("No clip list yet: the clip machine writes it every hour.",
+                                                    ephemeral=True)
+            return
+        text, pages = logic.queue_page(queue, page)
+        total = len(queue.get("clips") or [])
+        try:
+            updated = f"<t:{int(dt.datetime.fromisoformat(queue['updated']).timestamp())}:R>"
+        except (KeyError, ValueError, TypeError):
+            updated = "unknown"
+        head = f"**{total} clips can be made**, best first (page {min(page, pages)} of {pages}, updated {updated})."
+        body = f"{head}\n```\n{text}\n```"
+        if len(body) > 2000:
+            body = body[:1990] + "\n```"
+        await interaction.response.send_message(body, ephemeral=True)
+
     # ------------------------------------------------------------------ #
     # Status command
     # ------------------------------------------------------------------ #

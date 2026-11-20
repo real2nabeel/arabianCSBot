@@ -286,6 +286,10 @@ def main():
         demos = scan_demos(demos_dir)
         sync_content({info.get("map", "") for info in demos.values()})
         cleanup(demos_dir)
+        try:
+            write_queue(demos)
+        except Exception as e:
+            say(f"couldn't update the clip queue: {type(e).__name__}: {e}")
         return 0
     if not a.if_requested:
         return 75 if run(a)["state"] == "busy" else 0
@@ -310,6 +314,24 @@ def main():
         write_status(requested_by=request.get("requested_by"), requested_by_name=who, started=started,
                      finished=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **result)
     return 75 if result["state"] == "busy" else 0
+
+
+QUEUE_FIELDS = ("key", "player", "summary", "score", "moments")
+
+
+def write_queue(demos):
+    """CONTROL/queue.json: every clip that can still be made, best first, for the bot's /clips-queue. Only demos still
+    on disk count (cleanup removes old ones), and clips already made or failed are left out."""
+    done_path = os.path.join(WORK, "done.json")
+    done = json.load(open(done_path)) if os.path.exists(done_path) else {}
+    kept = {p: i for p, i in demos.items() if os.path.exists(p)}
+    clips = [c for c in select.plan(load_moments(), kept, top=10_000, min_score=MIN_SCORE) if c["key"] not in done]
+    os.makedirs(CONTROL, exist_ok=True)
+    tmp = os.path.join(CONTROL, "queue.json.tmp")
+    json.dump({"updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+               "clips": [{k: c.get(k) for k in QUEUE_FIELDS} for c in clips]},
+              open(tmp, "w", encoding="utf8"), ensure_ascii=False)
+    os.replace(tmp, os.path.join(CONTROL, "queue.json"))
 
 
 def run(a):
@@ -360,6 +382,10 @@ def run(a):
         if os.environ.get("CLIPS_STOP_STEAM", "1") == "1":
             render.stop_steam()
         cleanup(demos_dir)
+        try:
+            write_queue(demos)
+        except Exception as e:   # the list is a convenience; it must never fail the run
+            say(f"couldn't update the clip queue: {type(e).__name__}: {e}")
     return result
 
 
