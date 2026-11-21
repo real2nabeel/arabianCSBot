@@ -119,6 +119,15 @@ def title(meta, limit=100):
     return moment_text(meta)[0][:limit].rstrip()
 
 
+def tiktok_draft_dm(meta, caption):
+    """The two DMs sent after a clip lands in TikTok's drafts (which have no caption): what's waiting, and the
+    caption alone, so a long press copies just the caption."""
+    what = f"{meta.get('player', '')} – {meta.get('summary', '')}".strip(" –")
+    note = (f"📥 New TikTok draft: **{what}**\n"
+            "Open TikTok (the \"content is ready\" notification or your inbox), paste the caption below and post it.")
+    return note, caption.strip()[:2000]
+
+
 def parse_hours(spec):
     """"12-23" -> (12, 23): posting is allowed from hour 12:00 up to 23:59. "0-23" or blank means any time."""
     if not spec:
