@@ -224,4 +224,4 @@ def what_it_shows(clip, kills):
             "type": kind, "kills": len(own), "headshots": sum(1 for k in own if k["hs"]),
             "weapons": " ".join(k["w"] for k in own), "extra": " ".join(extras), "enemies": enemies,
             "start": own[0]["t"] if own else clip["start"], "end": own[-1]["t"] if own else clip["start"],
-            "score": score_kills(own, enemies, extras)}
+            "score": 0 if any(k.get("vb") for k in own) else score_kills(own, enemies, extras)}   # bots: never

@@ -191,16 +191,19 @@ def load_moments():
 
 
 def scan_demos(demos_dir):
-    """Scan results per demo, cached next to each demo."""
+    """Scan results per demo, cached next to each demo (made again when the demo or demo.SCAN_VERSION is newer)."""
     out = {}
     for name in sorted(os.listdir(demos_dir)):
         if not name.endswith(".dem"):
             continue
         path = os.path.join(demos_dir, name)
         cache = path + ".scan.json"
+        info = None
         if os.path.exists(cache) and os.path.getmtime(cache) >= os.path.getmtime(path):
             info = json.load(open(cache, encoding="utf8"))
-        else:
+            if "error" not in info and info.get("version") != demo.SCAN_VERSION:
+                info = None
+        if info is None:
             try:
                 info = demo.scan(path)
             except demo.DemoError as e:
@@ -346,7 +349,8 @@ def run(a):
     if not a.no_fetch and not a.dry_run:
         sync_content({info.get("map", "") for info in demos.values()})
     moments = load_moments()
-    clips = [c for c in select.plan(moments, demos, top=10_000, min_score=MIN_SCORE) if c["key"] not in done]
+    clips = [c for c in select.plan(moments, demos, top=10_000, min_score=MIN_SCORE)
+             if c["key"] not in done and c["score"] > 0]   # 0: bots killed in it (or no kills shown)
     say(f"{len(moments)} moments listed, {len(demos)} demos, {len(clips)} new clips; making up to {a.limit}")
     for c in clips[:a.limit]:
         say(f"  {c['score']:>4}  {c['player']} - {c['summary']} ({c['end'] - c['start']:.0f} s, {os.path.basename(c['demo'])})")

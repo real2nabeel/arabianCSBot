@@ -58,6 +58,31 @@ def _demo_bytes(times, table_msg, extra=None):
     return bytes(header) + frames + struct.pack("<i", 1) + bytes(entry)
 
 
+class TestBots(unittest.TestCase):
+    @staticmethod
+    def userinfo(slot, name, bot):
+        info = f"\\name\\{name}\\topcolor\\1" + ("\\*bot\\1" if bot else "\\*sid\\7656") + "\\model\\sas"
+        return bytes([demo.SVC_UPDATEUSERINFO, slot]) + b"\x01\x02\x03\x04" + info.encode() + b"\x00"
+
+    def test_kills_of_bots_are_marked(self):
+        import os
+        import tempfile
+        times = [i * 0.5 for i in range(8)]
+        kill = "\x08[clips] kill t=1.00 k={k} v={v} hs=0 w=ak47 kt=1 vt=2\t{kn}\t{vn}\x00"
+        lines = {0: self.userinfo(2, "Chris", True) + self.userinfo(3, "Melo", False) + self.userinfo(4, "Ho!", False),
+                 2: kill.format(k=4, v=3, kn="Melo", vn="Chris").encode(),
+                 3: kill.format(k=3, v=4, kn="Chris", vn="Melo").encode(),
+                 4: self.userinfo(2, "Damo", False),                 # a player took the bot's slot
+                 5: kill.format(k=4, v=3, kn="Melo", vn="Damo").encode()}
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "a.dem")
+            open(src, "wb").write(_demo_bytes(times, b"", extra=lines))
+            got = demo.scan(src)
+        self.assertEqual([(k["vn"], k["vb"], k["kb"]) for k in got["kills"]],
+                         [("Chris", 1, 0), ("Melo", 0, 1), ("Damo", 0, 0)])
+        self.assertEqual(got["version"], demo.SCAN_VERSION)
+
+
 class TestSyncMarkers(unittest.TestCase):
     TEXTMSG = bytes([39, 77, 255]) + b"TextMsg\x00"
 

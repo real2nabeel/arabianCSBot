@@ -10,7 +10,9 @@ frames carry the raw server messages, which is where the clip_highlights plugin'
                                                      weapon's owner, so HLTV wouldn't have them otherwise)
   [clips] weapon t=.. p=<slot> w=<name>              the weapon a player switched to (plugin 1.2 and later)
 
-``scan`` finds the mark/round/kill lines with their demo time. ``follow`` writes a copy of a demo that makes HLTV's
+``scan`` finds the mark/round/kill lines with their demo time, and marks kills of and by bots: the engine's
+svc_updateuserinfo for a bot carries "\\*bot\\1", so the scan keeps track of which player slots are bots.
+``follow`` writes a copy of a demo that makes HLTV's
 camera follow one player in first person during a time window (it appends HLTV director messages to every frame in
 the window; the game obeys them because spec_autodirector is on by default), and turns that player's anim lines
 into real weapon animation messages, so switching, reloading and knife attacks animate.
@@ -38,11 +40,15 @@ FRAME_INFO_LEN = 436 + 28                      # demo info + sequence info befor
 SVC_WEAPONANIM = 35
 SVC_DIRECTOR = 51
 SVC_STUFFTEXT = 9
+SVC_UPDATEUSERINFO = 13
 DRC_CMD_EVENT = 2
 DRC_CMD_MODE = 3
 OBS_IN_EYE = 4
 
 _LINE = re.compile(rb"\[clips\] (mark|round|kill) ([^\x00\n]*)")
+# svc_updateuserinfo: slot (byte), user id (long), userinfo string ("\name\Chris\...\*bot\1\...").
+_USERINFO = re.compile(rb"\x0d([\x00-\x3f])....(\\[^\x00]*\\name\\[^\x00]*|\\name\\[^\x00]*)\x00", re.S)
+SCAN_VERSION = 2   # bump when scan's output changes, so cached scans are made again
 _ANIM = re.compile(rb"\[clips\] anim t=[0-9.]+ p=(\d+) a=(\d+) b=(\d+)")
 _MSG = re.compile(rb"\[clips\] msg t=[0-9.]+ p=(\d+) n=(\w+) a=([-0-9.:,]*)")
 # One-player messages the plugin copies to HLTV that playback shows when replayed: scope zoom, flashbang, grenade
@@ -118,15 +124,20 @@ def map_name(d):
 
 
 def scan(path):
-    """All [clips] lines in a demo: {"marks": {id: t}, "rounds": [(n, t)], "kills": [dict]} (t in demo seconds)."""
+    """All [clips] lines in a demo: {"marks": {id: t}, "rounds": [(n, t)], "kills": [dict]} (t in demo seconds).
+    Each kill has "vb"/"kb": 1 when the victim/killer was a bot at the time."""
     d = open(path, "rb").read()
     marks, rounds, kills, seen = {}, [], [], set()
+    bots = {}   # entity (slot + 1) -> whether the player in it is a bot
     for _, offset, length in _entries(d):
         for _, _, t, msg in _frames(d, offset, offset + length):
             if msg is None:
                 continue
             mlen, = struct.unpack_from("<i", d, msg)
             body = d[msg + 4:msg + 4 + mlen]
+            if b"\\name\\" in body:
+                for m in _USERINFO.finditer(body):
+                    bots[m.group(1)[0] + 1] = b"\\*bot\\1" in m.group(2)
             if b"[clips]" not in body:
                 continue
             for m in _LINE.finditer(body):
@@ -139,8 +150,10 @@ def scan(path):
                 elif kind == b"round":
                     rounds.append((int(text.split()[0]), round(t, 3)))
                 else:
-                    kills.append(parse_kill(text, t))
-    return {"map": map_name(d), "marks": marks, "rounds": rounds, "kills": kills}
+                    kill = parse_kill(text, t)
+                    kill["vb"], kill["kb"] = int(bots.get(kill["v"], False)), int(bots.get(kill["k"], False))
+                    kills.append(kill)
+    return {"version": SCAN_VERSION, "map": map_name(d), "marks": marks, "rounds": rounds, "kills": kills}
 
 
 def parse_kill(text, t):
