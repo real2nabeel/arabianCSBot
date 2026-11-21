@@ -155,5 +155,16 @@ class TestStreakName(unittest.TestCase):
                          ["", "Double kill", "Triple kill", "Multi kill", "Rampage", "Unstoppable"])
 
 
+class TestRunLimit(unittest.TestCase):
+    def test_the_requested_count(self):
+        self.assertEqual(select.run_limit({"limit": 15}, 8), 15)   # more than the default is fine
+        self.assertEqual(select.run_limit({"limit": 1}, 8), 1)     # /clips-one
+        self.assertEqual(select.run_limit({"limit": 500}, 8), select.RUN_MAX)
+
+    def test_default_without_a_count(self):
+        for request in ({}, {"limit": None}, {"limit": 0}, {"limit": "5"}, {"limit": True}):
+            self.assertEqual(select.run_limit(request, 8), 8)
+
+
 if __name__ == "__main__":
     unittest.main()

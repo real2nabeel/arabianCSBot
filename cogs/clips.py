@@ -10,7 +10,8 @@ The host-side job (clips/nightly.py) writes finished clips into CLIPS_DIR/<clip 
 Only 👍/❌ from members with a role in CLIPS_APPROVER_ROLE_IDS (or Administrator) count; a ❌ wins. A blank
 CLIPS_REVIEW_CHANNEL_ID turns the cog off.
 
-/clips-run (approvers only) starts the host job, /clips-one does the same for just the best new clip: it writes CLIPS_CONTROL_DIR/request.json, cron on the host picks
+/clips-run (approvers only) starts the host job, for a given number of clips (best first) or the job's default;
+/clips-one does the same for just the best new clip. It writes CLIPS_CONTROL_DIR/request.json, cron on the host picks
 it up within a minute, and the job's CLIPS_CONTROL_DIR/status.json is reported in the review channel when done.
 """
 import asyncio
@@ -34,6 +35,7 @@ from utils.constants import (
 
 PLATFORM_NAMES = {"facebook": "Facebook", "instagram": "Instagram", "youtube": "YouTube", "tiktok": "TikTok"}
 MAX_ATTEMPTS = 3
+RUN_MAX = 20   # most clips one /clips-run may ask for (about 3-7 minutes each); clips.select.RUN_MAX on the host
 COLORS = {"pending": 0xF1C40F, "approved": 0x2ECC71, "rejected": 0x95A5A6}
 
 
@@ -264,9 +266,10 @@ class Clips(commands.Cog):
         os.replace(tmp, path)
 
     @app_commands.command(name="clips-run", description="Make clips from the latest highlights now")
+    @app_commands.describe(count=f"How many clips to make, best first (1-{RUN_MAX}; default: the usual amount)")
     @app_commands.default_permissions(manage_messages=True)
-    async def clips_run(self, interaction: discord.Interaction):
-        await self._queue_run(interaction, None)
+    async def clips_run(self, interaction: discord.Interaction, count: app_commands.Range[int, 1, RUN_MAX] = None):
+        await self._queue_run(interaction, count)
 
     @app_commands.command(name="clips-one", description="Make just the best new clip now (quicker)")
     @app_commands.default_permissions(manage_messages=True)
@@ -305,7 +308,8 @@ class Clips(commands.Cog):
         if limit:
             request["limit"] = limit
         await loop.run_in_executor(None, self._write_json, self._control("request.json"), request)
-        what = "Clip run for the best new clip" if limit == 1 else "Clip run"
+        what = ("Clip run for the best new clip" if limit == 1 else
+                f"Clip run for the best {limit} new clips" if limit else "Clip run")
         await interaction.response.send_message(
             f"{what} queued: it starts within a minute; each clip takes about 3–7 minutes to make. New clips and the "
             f"result will be posted in <#{CLIPS_REVIEW_CHANNEL_ID}>. Make sure nobody is playing on the Steam account.",

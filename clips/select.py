@@ -26,6 +26,18 @@ STREAKS = {2: "Double kill", 3: "Triple kill", 4: "Quad kill", 5: "Multi kill", 
            8: "Dominating", 9: "Impressive"}
 
 
+RUN_MAX = 20            # most clips one /clips-run may ask for (cogs/clips.py RUN_MAX)
+
+
+def run_limit(request, default):
+    """How many clips a requested run makes: the request's "limit" (from /clips-run's count or /clips-one), at most
+    RUN_MAX, or ``default`` when the request names none."""
+    limit = request.get("limit")
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        return min(limit, RUN_MAX)
+    return default
+
+
 def streak_name(kills):
     """"Triple kill" for 3 kills, ... "Unstoppable" from 10; "" below 2."""
     return "Unstoppable" if kills >= 10 else STREAKS.get(kills, "")
