@@ -148,6 +148,15 @@ class TestWhatItShows(unittest.TestCase):
         self.assertEqual((play["type"], play["extra"], play["score"]), ("special", "air noscope", 20 + 30 + 10))
         self.assertEqual(select.describe(play), "no-scope AWP kill")
 
+    def test_killing_a_bot_scores_zero(self):
+        clutch = moment(type="clutch", enemies=4, kills=4, extra="1v4")
+        humans = [k(10), k(15), k(25), k(30, hs=1)]
+        self.assertGreater(select.what_it_shows(self.clip(clutch), humans)["score"], 0)
+        self.assertEqual(select.what_it_shows(self.clip(clutch), humans[:3] + [dict(k(30), vb=1)])["score"], 0)
+        # a bot killed by someone else in the clip doesn't matter
+        other = dict(k(20), k=7, vb=1)
+        self.assertGreater(select.what_it_shows(self.clip(clutch), humans + [other])["score"], 0)
+
 
 class TestStreakName(unittest.TestCase):
     def test_names(self):
