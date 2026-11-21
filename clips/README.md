@@ -45,7 +45,8 @@ HLTV "arabian-servers.com 2013" -> clips-*.dem ─┴─ FTP ─> clips/nightly.
    `CLIPS_CONTROL_HOST_DIR=/home/<you>/clips/control`, then recreate the container (`docker compose up -d --build`).
 
 Clips are made every morning at 04:00 Palestine time (the 20 best new ones; at about 100 a day, the rest are
-dropped with their demos after 4 days). Start an extra run from Discord with `/clips-run` (clip reviewers only);
+dropped with their demos after 4 days). Start an extra run from Discord with `/clips-run` (clip reviewers only;
+`count` picks how many clips, best first, up to 20, otherwise 8);
 the result is posted in the review channel. The 04:00 run posts only the clips themselves.
 By hand: `python3 -m clips.nightly --dry-run` lists what it would make; without `--dry-run` it makes them.
 Log: `~/clips/nightly.log`.

@@ -301,8 +301,7 @@ def main():
     except (OSError, ValueError):
         request = {}
     os.remove(request_path)
-    if isinstance(request.get("limit"), int) and request["limit"] > 0:
-        a.limit = min(a.limit, request["limit"])   # /clips-one asks for a single clip
+    a.limit = select.run_limit(request, a.limit)   # /clips-run's count, or 1 from /clips-one
     started = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     who = request.get("requested_by_name", "")
     say(f"run requested by {who or 'unknown'}")
