@@ -30,7 +30,7 @@ from utils.constants import (
     CLIPS_HASHTAGS,
     CLIPS_PLATFORMS, CLIPS_POST_GAP_MINUTES, CLIPS_POST_HOURS, CLIPS_POSTS_PER_DAY, CLIPS_REVIEW_CHANNEL_ID,
     CLIPS_SERVER_ADDRESS, GUILD_ID, META_GRAPH_VERSION, META_IG_ID, META_PAGE_ID, META_TOKEN, TIKTOK_CLIENT_FILE,
-    TIKTOK_MODE, TIKTOK_TOKEN_FILE, YOUTUBE_PRIVACY, YOUTUBE_TOKEN_FILE,
+    TIKTOK_MODE, TIKTOK_TOKEN_FILE, YOUTUBE_PRIVACY, YOUTUBE_TOKEN_FILE, CLIPS_TIKTOK_DM_USER_IDS,
 )
 
 PLATFORM_NAMES = {"facebook": "Facebook", "instagram": "Instagram", "youtube": "YouTube", "tiktok": "TikTok"}
@@ -181,10 +181,23 @@ class Clips(commands.Cog):
                 external_id, url = await upload(clip)
                 await self.bot.db_bot.record_clip_post(clip_id, platform, "posted", external_id, url)
                 print(f"[clips] posted {clip_id} to {platform}: {url}")
+                if platform == "tiktok" and TIKTOK_MODE != "direct":
+                    await self._dm_tiktok_caption(meta, clip["caption"])
             except Exception as e:
                 await self.bot.db_bot.record_clip_post(clip_id, platform, "failed", error=f"{type(e).__name__}: {e}")
                 print(f"[clips] {platform} failed for {clip_id}: {type(e).__name__}: {e}")
             await self._refresh_message(row)
+
+    async def _dm_tiktok_caption(self, meta, caption):
+        """TikTok drafts have no caption: DM it to CLIPS_TIKTOK_DM_USER_IDS. A failed DM never fails the upload."""
+        note, text = logic.tiktok_draft_dm(meta, caption)
+        for user_id in CLIPS_TIKTOK_DM_USER_IDS:
+            try:
+                user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                await user.send(note, allowed_mentions=discord.AllowedMentions.none())
+                await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+            except discord.HTTPException as e:
+                print(f"[clips] couldn't DM the TikTok caption to {user_id}: {type(e).__name__}: {e}")
 
     async def _refresh_message(self, row):
         clip = await self.bot.db_bot.get_clip(row["clip_id"])

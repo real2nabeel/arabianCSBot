@@ -15,6 +15,12 @@ class TestText(unittest.TestCase):
     def test_unknown_fields_are_kept(self):
         self.assertEqual(clips.caption(META, "{player} {oops}", "", ""), "Ace {oops}")
 
+    def test_tiktok_draft_dm(self):
+        note, text = clips.tiktok_draft_dm(META, "  1v4 clutch on Dust2 – CS 1.6\n\n#cs16  ")
+        self.assertIn("**Ace – 4 kills in 2.1 s**", note)
+        self.assertEqual(text, "1v4 clutch on Dust2 – CS 1.6\n\n#cs16")     # the caption alone, ready to copy
+        self.assertEqual(len(clips.tiktok_draft_dm(META, "x" * 3000)[1]), 2000)   # Discord's message limit
+
     def test_title_without_moments_falls_back(self):
         self.assertEqual(clips.title(META), "Ace – 4 kills in 2.1 s")
         self.assertEqual(len(clips.title({"player": "A" * 120, "summary": "x"})), 100)

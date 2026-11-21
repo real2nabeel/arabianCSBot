@@ -157,3 +157,5 @@ YOUTUBE_PRIVACY = os.getenv("YOUTUBE_PRIVACY", "private").strip()   # an unaudit
 TIKTOK_TOKEN_FILE = os.getenv("TIKTOK_TOKEN_FILE", "/clips-secrets/tiktok_token.json")
 TIKTOK_CLIENT_FILE = os.getenv("TIKTOK_CLIENT_FILE", "/clips-secrets/tiktok_client")
 TIKTOK_MODE = os.getenv("TIKTOK_MODE", "inbox").strip()            # inbox = to the app's drafts; direct needs an audit
+# TikTok drafts arrive without a caption, so these members get it by DM after each draft (to copy into TikTok).
+CLIPS_TIKTOK_DM_USER_IDS = _id_list_env("CLIPS_TIKTOK_DM_USER_IDS")
