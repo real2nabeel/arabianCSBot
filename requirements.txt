@@ -2,7 +2,7 @@ discord.py==2.7.1
 python-a2s~=1.4.1
 aiomysql~=0.3.2
 python-dotenv~=1.2.2
-Pillow>=11.3,<12
+Pillow>=13.0,<14
 arabic-reshaper>=3,<4
 python-bidi>=0.6,<0.7
 
